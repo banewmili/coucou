@@ -61,6 +61,14 @@ Not build-verified: this was written on a Linux VM without Xcode. Review the
 three new files once before shipping; the riskiest area is `MCPConnection`
 (stdio framing, continuation bookkeeping).
 
+## CI (GitHub Actions)
+`.github/workflows/build.yml` (extended from upstream): pinned to `macos-15`
+with explicit Xcode 16 selection. Every push/PR builds Release, ad-hoc signs,
+and uploads `Coucou-macOS.zip` as an artifact (14-day retention) — download it
+from the Actions tab to test without Xcode. `.github/workflows/release.yml`
+does the same and publishes a GitHub Release on `v*` tags. To activate: push
+this fork to your own GitHub repo; Actions run automatically.
+
 ## Suggested first checks on a Mac
 1. Settings > AI Provider > OpenRouter: paste `sk-or-v1-...` key, model
    `anthropic/claude-sonnet-4`, ask something in the notch.
