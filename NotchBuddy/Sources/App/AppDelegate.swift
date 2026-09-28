@@ -11,6 +11,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         signal(SIGPIPE, SIG_IGN)
         // Warm up Keychain cache on main thread BEFORE any poller or view touches it
         _ = KeychainStore.shared
+        // Load installed skills and MCP servers; connect MCP servers in background
+        SkillManager.shared.load()
+        MCPManager.shared.load()
+        Task { await MCPManager.shared.connectAll() }
         NSApp.setActivationPolicy(.accessory)
         setupMenuBarItem()
         setupIsland()

@@ -62,6 +62,8 @@ final class KeychainStore: @unchecked Sendable {
 
     private static let allKeys = [
         "anthropic-api-key",
+        "openrouter-api-key",
+        "openaicomp-api-key",
         "resend-api-key", "resend-from",
         "n8n-url", "n8n-api-key",
         "vercel-token",
@@ -106,35 +108,35 @@ final class KeychainStore: @unchecked Sendable {
 final class ClaudeService {
     static let shared = ClaudeService()
 
-    private let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
-    private let anthropicVersion = "2023-06-01"
-    private let model = "claude-sonnet-4-6"
+    /// Maximum agentic tool-call rounds per chat turn.
+    private let maxToolRounds = 8
 
-    var apiKey: String? { KeychainStore.shared.get("anthropic-api-key") }
-
-    // Multi-turn conversation messages (for API)
+    // Multi-turn conversation messages (provider-agnostic internal format;
+    // see AIProviderClient for the wire conversions).
     private var conversationMessages: [[String: Any]] = []
 
     func clearConversation() {
         conversationMessages = []
     }
 
-    private let systemPrompt = """
-    You are Mochi, Louis's personal AI assistant embedded in the notch of his Mac. \
-    You have web search access and can help with absolutely anything — research, coding, finding places, recommendations, tasks, questions. \
-    Respond in the user's language. Be thorough and complete — use as much detail as the task requires. \
-    No markdown formatting (no **, no ##, no bullet dashes). Use plain text with line breaks.
-    """
+    private var systemPrompt: String {
+        let base = """
+        You are Mochi, Louis's personal AI assistant embedded in the notch of his Mac. \
+        You have web search access and can help with absolutely anything — research, coding, finding places, recommendations, tasks, questions. \
+        Respond in the user's language. Be thorough and complete — use as much detail as the task requires. \
+        No markdown formatting (no **, no ##, no bullet dashes). Use plain text with line breaks.
+        """
+        let skills = SkillManager.shared.promptAddition()
+        if !skills.isEmpty { return base + skills }
+        return base
+    }
 
-    private let webSearchTools: [[String: Any]] = [
-        ["type": "web_search_20250305", "name": "web_search", "max_uses": 5]
-    ]
-
-    // MARK: - Chat (multi-turn, natural text + web search)
+    // MARK: - Chat (multi-turn, agentic tool loop over MCP tools)
 
     func chat(query: String, context: PromptContext?, state: AppState) async {
-        guard let key = apiKey, !key.isEmpty else {
-            await showError("API key missing. Open settings.", state: state)
+        let kind = AIProviderStore.shared.activeKind
+        guard AIProviderStore.shared.apiKey(for: kind)?.isEmpty == false else {
+            await showError("\(kind.displayName) API key missing. Open settings.", state: state)
             return
         }
 
@@ -159,28 +161,76 @@ final class ClaudeService {
 
         conversationMessages.append(["role": "user", "content": userContent])
 
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 4096,
-            "tools": webSearchTools,
-            "system": systemPrompt,
-            "messages": conversationMessages,
-        ]
+        let mcpTools = MCPManager.shared.toolDefinitions()
+        let useWebSearch = (kind == .anthropic)
 
         do {
-            let data = try await callAPI(body: body, key: key, beta: "web-search-2025-03-05")
-            await handleChatResult(data, state: state)
+            var round = 0
+            while round < maxToolRounds {
+                round += 1
+                let resp = try await AIProviderClient.shared.complete(
+                    messages: conversationMessages,
+                    system: systemPrompt,
+                    tools: mcpTools,
+                    maxTokens: 4096,
+                    webSearch: useWebSearch)
+
+                // Store the provider-native assistant message for correct multi-turn.
+                conversationMessages.append(resp.nativeAssistantMessage)
+
+                guard !resp.toolCalls.isEmpty else {
+                    await showChatText(resp.text, state: state)
+                    return
+                }
+
+                state.noteMessage = "Running \(resp.toolCalls.count) tool(s)..."
+                state.stateOverride = nil
+                state.view = .note
+
+                for toolCall in resp.toolCalls {
+                    let output: String
+                    do {
+                        output = try await MCPManager.shared.callTool(
+                            name: toolCall.name, argumentsJSON: toolCall.argumentsJSON)
+                    } catch {
+                        output = "Tool error: \(error.localizedDescription)"
+                    }
+                    conversationMessages.append([
+                        "role": "tool",
+                        "tool_call_id": toolCall.id,
+                        "name": toolCall.name,
+                        "content": output.isEmpty ? "(no output)" : output,
+                    ])
+                }
+            }
+            await showError("Stopped after \(maxToolRounds) tool rounds.", state: state)
         } catch {
-            conversationMessages.removeLast()
-            await showError("Network error: \(error.localizedDescription)", state: state)
+            if let last = conversationMessages.last,
+               (last["role"] as? String) == "user" {
+                conversationMessages.removeLast()
+            }
+            await showError("Request failed: \(error.localizedDescription)", state: state)
         }
+    }
+
+    private func showChatText(_ text: String, state: AppState) async {
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else {
+            await showError("No response text.", state: state)
+            return
+        }
+        state.chatHistory.append(ChatMessage(role: .assistant, content: clean))
+        state.stateOverride = nil
+        state.view = .prompt
+        NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.happy)
     }
 
     // MARK: - Structured search (M8 — window attach + web search)
 
     func search(query: String, context: PromptContext?, state: AppState) async {
-        guard let key = apiKey, !key.isEmpty else {
-            await showError("Anthropic API key missing. Open settings to configure it.", state: state)
+        let kind = AIProviderStore.shared.activeKind
+        guard AIProviderStore.shared.apiKey(for: kind)?.isEmpty == false else {
+            await showError("\(kind.displayName) API key missing. Open settings to configure it.", state: state)
             return
         }
 
@@ -207,84 +257,22 @@ final class ClaudeService {
         Maximum 3 items. "url" is optional. "note" is optional.
         """
 
-        let tools: [[String: Any]] = [
-            ["type": "web_search_20250305", "name": "web_search", "max_uses": 3]
-        ]
-
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 1024,
-            "tools": tools,
-            "system": system,
-            "messages": [["role": "user", "content": userContent]],
-        ]
-
         do {
-            let result = try await callAPI(body: body, key: key, beta: "web-search-2025-03-05")
-            await handleResult(result, state: state)
+            let resp = try await AIProviderClient.shared.complete(
+                messages: [["role": "user", "content": userContent]],
+                system: system,
+                tools: [],
+                maxTokens: 1024,
+                webSearch: kind == .anthropic)
+            await handleResult(resp.text, state: state)
         } catch {
-            await showError("Network error: \(error.localizedDescription)", state: state)
+            await showError("Request failed: \(error.localizedDescription)", state: state)
         }
-    }
-
-    // MARK: - API call
-
-    private func callAPI(body: [String: Any], key: String, beta: String? = nil) async throws -> Data {
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue(key, forHTTPHeaderField: "x-api-key")
-        request.setValue(anthropicVersion, forHTTPHeaderField: "anthropic-version")
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        if let beta { request.setValue(beta, forHTTPHeaderField: "anthropic-beta") }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        request.timeoutInterval = 45
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            let msg = String(data: data, encoding: .utf8) ?? "unknown error"
-            throw NSError(domain: "Claude", code: 0, userInfo: [NSLocalizedDescriptionKey: msg])
-        }
-        return data
-    }
-
-    // MARK: - Chat result handler
-
-    private func handleChatResult(_ data: Data, state: AppState) async {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = json["content"] as? [[String: Any]] else {
-            await showError("Unexpected API response.", state: state)
-            return
-        }
-
-        // Store full content (includes tool_use/tool_result blocks) for correct multi-turn context
-        conversationMessages.append(["role": "assistant", "content": content])
-
-        guard let textBlock = content.first(where: { $0["type"] as? String == "text" }),
-              let text = textBlock["text"] as? String, !text.isEmpty else {
-            await showError("No response text.", state: state)
-            return
-        }
-
-        // Add to display history
-        state.chatHistory.append(ChatMessage(role: .assistant, content: text.trimmingCharacters(in: .whitespacesAndNewlines)))
-
-        state.stateOverride = nil
-        state.view = .prompt
-        NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.happy)
     }
 
     // MARK: - Structured result handler
 
-    private func handleResult(_ data: Data, state: AppState) async {
-        // Extract text from Anthropic response (may contain tool_use / web_search_tool_result blocks)
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = json["content"] as? [[String: Any]],
-              let textBlock = content.first(where: { $0["type"] as? String == "text" }),
-              let text = textBlock["text"] as? String else {
-            await showError("Unexpected API response.", state: state)
-            return
-        }
+    private func handleResult(_ text: String, state: AppState) async {
 
         // Strip markdown code fences if present, then extract JSON object
         let cleanText: String

@@ -4,7 +4,26 @@ import AppKit
 
 struct SettingsView: View {
     @ObservedObject private var state = AppState.shared
-    @State private var apiKey: String = KeychainStore.shared.get("anthropic-api-key") ?? ""
+    @ObservedObject private var skills = SkillManager.shared
+    @ObservedObject private var mcp = MCPManager.shared
+
+    // AI provider
+    @State private var providerKind: AIProviderKind = AIProviderStore.shared.activeKind
+    @State private var anthropicKey: String = KeychainStore.shared.get("anthropic-api-key") ?? ""
+    @State private var openRouterKey: String = KeychainStore.shared.get("openrouter-api-key") ?? ""
+    @State private var openCompKey: String = KeychainStore.shared.get("openaicomp-api-key") ?? ""
+    @State private var openCompURL: String = AIProviderStore.shared.customBaseURL
+    @State private var modelName: String = AIProviderStore.shared.model(for: AIProviderStore.shared.activeKind)
+
+    // Skills
+    @State private var skillURL: String = ""
+    @State private var installingSkill: Bool = false
+
+    // MCP
+    @State private var mcpName: String = ""
+    @State private var mcpCommand: String = ""
+    @State private var mcpArgs: String = ""
+
     @State private var launchAtStartup: Bool = (SMAppService.mainApp.status == .enabled)
     @State private var statusMessage: String = ""
     @State private var showDiff: Bool = false
@@ -45,16 +64,44 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
 
-                // MARK: API
-                GroupBox("Anthropic API") {
+                // MARK: AI Provider
+                GroupBox("AI Provider") {
                     VStack(alignment: .leading, spacing: 8) {
-                        SecureField("API key (sk-ant-…)", text: $apiKey)
-                            .textFieldStyle(.roundedBorder)
-                        Button("Save") {
-                            KeychainStore.shared.set("anthropic-api-key", value: apiKey)
-                            statusMessage = "✓ Key saved."
+                        Picker("Provider", selection: $providerKind) {
+                            ForEach(AIProviderKind.allCases) { kind in
+                                Text(kind.displayName).tag(kind)
+                            }
                         }
-                        .buttonStyle(.borderedProminent)
+                        .pickerStyle(.segmented)
+                        .onChange(of: providerKind) { _, kind in
+                            modelName = AIProviderStore.shared.model(for: kind)
+                        }
+
+                        switch providerKind {
+                        case .anthropic:
+                            SecureField(providerKind.keyPlaceholder, text: $anthropicKey)
+                                .textFieldStyle(.roundedBorder)
+                        case .openRouter:
+                            SecureField(providerKind.keyPlaceholder, text: $openRouterKey)
+                                .textFieldStyle(.roundedBorder)
+                            Text("One key for 300+ models. Get one at openrouter.ai")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        case .openAICompatible:
+                            TextField("Base URL  (https://.../v1)", text: $openCompURL)
+                                .textFieldStyle(.roundedBorder)
+                            SecureField(providerKind.keyPlaceholder, text: $openCompKey)
+                                .textFieldStyle(.roundedBorder)
+                            Text("OpenAI, Groq, DeepSeek, Ollama (http://localhost:11434/v1), ...")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+
+                        TextField("Model", text: $modelName)
+                            .textFieldStyle(.roundedBorder)
+
+                        Button("Save") { saveProvider() }
+                            .buttonStyle(.borderedProminent)
                     }
                     .padding(6)
                 }
@@ -293,6 +340,112 @@ struct SettingsView: View {
                     .padding(6)
                 }
 
+                // MARK: Skills
+                GroupBox("Skills") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Skill packs are injected into the assistant prompt. Install from a git URL or a local folder containing SKILL.md.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+
+                        if skills.skills.isEmpty {
+                            Text("No skills installed.")
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                        } else {
+                            ForEach(skills.skills) { skill in
+                                HStack {
+                                    Toggle(skill.name, isOn: Binding(
+                                        get: { skill.enabled },
+                                        set: { _ in skills.toggle(skill) }
+                                    ))
+                                    .toggleStyle(.switch)
+                                    Spacer()
+                                    Button("Remove") {
+                                        do {
+                                            try skills.remove(skill)
+                                        } catch {
+                                            statusMessage = "❌ \(error.localizedDescription)"
+                                        }
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .foregroundColor(.red)
+                                }
+                                if !skill.description.isEmpty {
+                                    Text(skill.description)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+
+                        HStack(spacing: 8) {
+                            TextField("Git URL or local folder", text: $skillURL)
+                                .textFieldStyle(.roundedBorder)
+                            Button(installingSkill ? "Installing..." : "Install") {
+                                installSkill()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(installingSkill || skillURL.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                    }
+                    .padding(6)
+                }
+
+                // MARK: MCP servers
+                GroupBox("MCP Servers") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Model Context Protocol servers give the assistant tools. \(mcp.toolCount) tool(s) connected.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+
+                        if mcp.servers.isEmpty {
+                            Text("No MCP servers configured.")
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                        } else {
+                            ForEach(mcp.servers) { server in
+                                HStack {
+                                    Circle()
+                                        .fill(mcp.connectedIds.contains(server.id) ? Color.green : Color.gray)
+                                        .frame(width: 8, height: 8)
+                                    Toggle(server.name, isOn: Binding(
+                                        get: { server.enabled },
+                                        set: { _ in mcp.toggleServer(id: server.id) }
+                                    ))
+                                    .toggleStyle(.switch)
+                                    Spacer()
+                                    Button("Remove") { mcp.removeServer(id: server.id) }
+                                        .buttonStyle(.borderless)
+                                        .foregroundColor(.red)
+                                }
+                                Text("\(server.command) \(server.args.joined(separator: " "))")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            TextField("Name  (e.g. filesystem)", text: $mcpName)
+                                .textFieldStyle(.roundedBorder)
+                            TextField("Command  (e.g. npx)", text: $mcpCommand)
+                                .textFieldStyle(.roundedBorder)
+                            TextField("Arguments  (space separated, e.g. -y @modelcontextprotocol/server-filesystem /tmp)", text: $mcpArgs)
+                                .textFieldStyle(.roundedBorder)
+                            HStack {
+                                Button("Add server") { addMCPServer() }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(mcpName.trimmingCharacters(in: .whitespaces).isEmpty
+                                              || mcpCommand.trimmingCharacters(in: .whitespaces).isEmpty)
+                                Button("Reconnect all") {
+                                    Task { await mcp.reconnectAll() }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                    .padding(6)
+                }
+
                 // MARK: Startup
                 GroupBox("Startup") {
                     Toggle("Launch at Mac startup", isOn: $launchAtStartup)
@@ -354,6 +507,58 @@ struct SettingsView: View {
         } catch {
             statusMessage = "❌ \(error.localizedDescription)"
         }
+    }
+
+    // MARK: - AI provider
+
+    private func saveProvider() {
+        let store = AIProviderStore.shared
+        store.activeKind = providerKind
+        store.setModel(modelName.trimmingCharacters(in: .whitespacesAndNewlines), for: providerKind)
+        switch providerKind {
+        case .anthropic:
+            saveKey("anthropic-api-key", value: anthropicKey)
+        case .openRouter:
+            saveKey("openrouter-api-key", value: openRouterKey)
+        case .openAICompatible:
+            store.customBaseURL = openCompURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            saveKey("openaicomp-api-key", value: openCompKey)
+        }
+        // Clear conversation so the next turn uses the new provider/model.
+        ClaudeService.shared.clearConversation()
+        statusMessage = "✓ Provider saved: \(providerKind.displayName)."
+    }
+
+    // MARK: - Skills
+
+    private func installSkill() {
+        let input = skillURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !input.isEmpty else { return }
+        installingSkill = true
+        Task {
+            do {
+                try await SkillManager.shared.install(from: input)
+                skillURL = ""
+                statusMessage = "✓ Skill installed."
+            } catch {
+                statusMessage = "❌ \(error.localizedDescription)"
+            }
+            installingSkill = false
+        }
+    }
+
+    // MARK: - MCP
+
+    private func addMCPServer() {
+        let name = mcpName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let command = mcpCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !command.isEmpty else { return }
+        let args = mcpArgs.split(separator: " ").map(String.init)
+        mcp.addServer(MCPManager.ServerConfig(name: name, command: command, args: args))
+        mcpName = ""
+        mcpCommand = ""
+        mcpArgs = ""
+        statusMessage = "✓ MCP server added, connecting..."
     }
 
     private func saveIntegrations() {
