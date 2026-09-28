@@ -8,9 +8,18 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XCODE" ]; then
+            echo "Using $XCODE"
+            sudo xcode-select -s "$XCODE/Contents/Developer"
+          fi
+          xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -26,4 +35,21 @@ jobs:
             -configuration Release \
             build \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO
+            CODE_SIGNING_REQUIRED=NO \
+            CONFIGURATION_BUILD_DIR=${{ github.workspace }}/build
+
+      - name: Sign ad hoc
+        run: codesign --force --deep -s - "${{ github.workspace }}/build/Coucou.app"
+
+      - name: Zip
+        run: |
+          ditto -c -k --keepParent \
+            "${{ github.workspace }}/build/Coucou.app" \
+            "${{ github.workspace }}/Coucou.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Coucou-macOS
+          path: Coucou.zip
+          retention-days: 14
