@@ -3,6 +3,15 @@
 Fork of [Louis-CFM/coucou](https://github.com/Louis-CFM/coucou) (MIT) with three additions.
 Upstream files untouched except `ClaudeService.swift`, `SettingsView.swift`, `AppDelegate.swift`.
 
+## License caveat (read this first)
+
+The MIT license covers the **source code only**. Per `LICENSE-ASSETS.md`
+(upstream's latest commit), the names "Coucou"/"Mochi", the Mochi character,
+icons, and sounds are NOT MIT-licensed: you may build and run it for yourself,
+but you may NOT publish or distribute a derivative under those names/assets
+without the author's written permission. If you ship your own app from this
+fork, give it your own name, icon, character, and sounds.
+
 ## What was added
 
 ### 1. Multi-provider AI (`AIProvider.swift`)
