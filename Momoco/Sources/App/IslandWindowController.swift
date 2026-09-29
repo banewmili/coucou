@@ -766,6 +766,10 @@ final class IslandWindowController: NSWindowController {
     }
 
     static func notchWidth(for screen: NSScreen) -> CGFloat {
+        // No notch (e.g. Intel Macs): pin to the classic 184pt pill width so the
+        // island stays a compact rounded bar (compact = 344x32 like the reference
+        // screenshot) instead of stretching across the whole screen.
+        guard screen.safeAreaInsets.top > 0 else { return IslandConst.notchWidth }
         let aux = (screen.auxiliaryTopLeftArea?.width ?? 0) +
                   (screen.auxiliaryTopRightArea?.width ?? 0)
         let w = screen.frame.width - aux
@@ -860,9 +864,8 @@ func islandSize(mode: IslandMode, view: IslandView,
                 nh: CGFloat = IslandConst.notchHeight,
                 showTerminal: Bool = false) -> (CGFloat, CGFloat) {
     switch mode {
-    case .hidden, .compact:
-        // Small pill sized to the Mac menu bar — short, fully rounded.
-        return (IslandConst.compactWidth, IslandConst.compactHeight)
+    case .hidden:   return (nw, nh)
+    case .compact:  return (nw + 160, nh)
     case .expanded:
         let layout = IslandConst.viewLayouts[view]!
         var w = IslandConst.expandedWidth

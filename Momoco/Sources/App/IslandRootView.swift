@@ -111,9 +111,10 @@ struct IslandContainer: View {
                                     nw: state.notchWidth, nh: state.notchHeight,
                                     showTerminal: state.showTerminal)
             // Expanded keeps its large rounded rect; hidden/compact are a fully
-            // rounded pill sized to the Mac menu bar.
-            let cr: CGFloat = newMode == .expanded ? IslandConst.expandedCorner : IslandConst.compactRadius
-            let tr: CGFloat = newMode == .expanded ? 0 : IslandConst.compactRadius
+            // rounded pill (344x32 on notch-less Macs, like the reference shot).
+            let pillR: CGFloat = state.notchHeight / 2
+            let cr: CGFloat = newMode == .expanded ? IslandConst.expandedCorner : pillR
+            let tr: CGFloat = newMode == .expanded ? 0 : pillR
             withAnimation(anim) {
                 islandWidth      = w
                 islandHeight     = (newMode == .expanded && state.view == .prompt) ? chatPromptHeight : h
@@ -157,8 +158,9 @@ struct IslandContainer: View {
                                     showTerminal: state.showTerminal)
             islandWidth      = w
             islandHeight     = state.view == .prompt ? chatPromptHeight : h
-            cornerRadius     = state.mode == .expanded ? IslandConst.expandedCorner : IslandConst.compactRadius
-            islandTopRadius  = state.mode == .expanded ? 0 : IslandConst.compactRadius
+            let pillR: CGFloat = state.notchHeight / 2
+            cornerRadius     = state.mode == .expanded ? IslandConst.expandedCorner : pillR
+            islandTopRadius  = state.mode == .expanded ? 0 : pillR
         }
         .onReceive(NotificationCenter.default.publisher(for: .botGreet)) { _ in
             greetNotif.toggle()
