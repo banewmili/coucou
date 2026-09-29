@@ -1,12 +1,16 @@
 import SwiftUI
 import Foundation
+import AppKit
 
 /// Persistent login shell (zsh) that powers the in-app Terminal.
 /// Commands run through pipes (no TTY): install tools with brew/npm/npx,
 /// then connect them to Momoco via MCP Servers or Connected Apps.
 /// Interactive full-screen TUIs (vim, htop) and sudo password prompts
 /// are not supported in this embedded shell.
-final class TerminalManager: ObservableObject {
+///
+/// Marked @unchecked Sendable like MCPConnection: all @Published state is
+/// mutated on the main thread (pipe reads hop via DispatchQueue.main).
+final class TerminalManager: ObservableObject, @unchecked Sendable {
     static let shared = TerminalManager()
 
     @Published private(set) var lines: [String] = []
