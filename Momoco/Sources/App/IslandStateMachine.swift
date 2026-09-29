@@ -9,7 +9,7 @@ final class IslandStateMachine {
         case hidden   // island invisible (notch size)
         case petit    // compact island (notch + ears)
         case home     // expanded, overview
-        case coucou   // expanded, greeting animation
+        case momoco   // expanded, greeting animation
     }
 
     private(set) var state: State = .hidden
@@ -21,9 +21,9 @@ final class IslandStateMachine {
     var homeToPetitDelay: TimeInterval = 15
     /// petit → hidden delay (seconds). Override for debug.
     var petitToHiddenDelay: TimeInterval = 60
-    /// coucou → petit delay after greeting animation ends (no hover). ~0.6s syncs with canvas collapse.
+    /// momoco → petit delay after greeting animation ends (no hover). ~0.6s syncs with canvas collapse.
     var greetAutoCollapseDelay: TimeInterval = 0.6
-    /// coucou → petit delay when mouse is hovering over the greeting.
+    /// momoco → petit delay when mouse is hovering over the greeting.
     var greetHoverCollapseDelay: TimeInterval = 10
 
     private var petitHideWork: DispatchWorkItem?

@@ -234,7 +234,7 @@ final class IslandWindowController: NSWindowController {
         // Feed FSM hover enter/leave
         if inIsland && !wasInIsland {
             guard !inAttachDrag else { wasInIsland = inIsland; return }
-            // If in coucou: tell greeting to stay open (tc → infinity)
+            // If in momoco: tell greeting to stay open (tc → infinity)
             if fsm.state == .momoco {
                 NotificationCenter.default.post(name: .greetingHover, object: nil)
             }
