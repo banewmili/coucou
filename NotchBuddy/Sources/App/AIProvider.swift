@@ -5,6 +5,8 @@ import Foundation
 enum AIProviderKind: String, Codable, CaseIterable, Identifiable {
     case anthropic
     case openRouter
+    case gemini
+    case nineRouter
     case openAICompatible
 
     var id: String { rawValue }
@@ -13,7 +15,17 @@ enum AIProviderKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .anthropic:        return "Anthropic"
         case .openRouter:       return "OpenRouter"
+        case .gemini:           return "Gemini"
+        case .nineRouter:       return "9Router"
         case .openAICompatible: return "OpenAI-compatible"
+        }
+    }
+
+    /// Short label that fits in the segmented picker.
+    var pickerLabel: String {
+        switch self {
+        case .openAICompatible: return "OpenAI"
+        default:                return displayName
         }
     }
 
@@ -21,6 +33,8 @@ enum AIProviderKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .anthropic:        return "claude-sonnet-4-6"
         case .openRouter:       return "anthropic/claude-sonnet-4"
+        case .gemini:           return "gemini-2.5-flash"
+        case .nineRouter:       return "kr/claude-sonnet-4.5"
         case .openAICompatible: return "gpt-4o-mini"
         }
     }
@@ -30,6 +44,8 @@ enum AIProviderKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .anthropic:        return "anthropic-api-key"
         case .openRouter:       return "openrouter-api-key"
+        case .gemini:           return "gemini-api-key"
+        case .nineRouter:       return "ninerouter-api-key"
         case .openAICompatible: return "openaicomp-api-key"
         }
     }
@@ -38,7 +54,24 @@ enum AIProviderKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .anthropic:        return "API key (sk-ant-...)"
         case .openRouter:       return "API key (sk-or-v1-...)"
+        case .gemini:           return "API key (AIza...)"
+        case .nineRouter:       return "API key (from 9Router dashboard)"
         case .openAICompatible: return "API key"
+        }
+    }
+
+    /// Providers that talk to a configurable HTTP base URL.
+    var needsBaseURL: Bool {
+        switch self {
+        case .nineRouter, .openAICompatible: return true
+        default: return false
+        }
+    }
+
+    var defaultBaseURL: String {
+        switch self {
+        case .nineRouter: return "http://localhost:20128/v1"
+        default:          return ""
         }
     }
 
@@ -49,7 +82,8 @@ enum AIProviderKind: String, Codable, CaseIterable, Identifiable {
 struct AIProviderSettings: Codable {
     var activeKindRaw: String = AIProviderKind.anthropic.rawValue
     var models: [String: String] = [:]   // kind rawValue -> model id
-    var customBaseURL: String = ""        // openAICompatible only
+    var baseURLs: [String: String] = [:] // kind rawValue -> base URL (providers with needsBaseURL)
+    var customBaseURL: String = ""       // legacy (openAICompatible); migrated into baseURLs on load
 }
 
 @MainActor
@@ -65,6 +99,13 @@ final class AIProviderStore {
             settings = decoded
         } else {
             settings = AIProviderSettings()
+        }
+        // Migrate legacy single customBaseURL into per-provider baseURLs.
+        if !settings.customBaseURL.isEmpty
+            && settings.baseURLs[AIProviderKind.openAICompatible.rawValue] == nil {
+            settings.baseURLs[AIProviderKind.openAICompatible.rawValue] = settings.customBaseURL
+            settings.customBaseURL = ""
+            save()
         }
     }
 
@@ -90,9 +131,16 @@ final class AIProviderStore {
         save()
     }
 
-    var customBaseURL: String {
-        get { settings.customBaseURL }
-        set { settings.customBaseURL = newValue; save() }
+    /// Base URL for providers with `needsBaseURL`; falls back to the kind's default.
+    func baseURL(for kind: AIProviderKind) -> String {
+        let saved = settings.baseURLs[kind.rawValue]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let saved, !saved.isEmpty { return saved }
+        return kind.defaultBaseURL
+    }
+
+    func setBaseURL(_ url: String, for kind: AIProviderKind) {
+        settings.baseURLs[kind.rawValue] = url
+        save()
     }
 
     func apiKey(for kind: AIProviderKind) -> String? {
@@ -146,6 +194,8 @@ final class AIProviderClient {
     private let anthropicEndpoint = URL(string: "https://api.anthropic.com/v1/messages")!
     private let anthropicVersion = "2023-06-01"
     private let openRouterBaseURL = "https://openrouter.ai/api/v1"
+    /// Google's OpenAI-compatible endpoint (key goes in x-goog-api-key, not Bearer).
+    private let geminiBaseURL = "https://generativelanguage.googleapis.com/v1beta/openai"
 
     /// - Parameters:
     ///   - messages: internal format. User/assistant content is an array of
@@ -172,18 +222,94 @@ final class AIProviderClient {
                                                maxTokens: maxTokens, webSearch: webSearch)
         case .openRouter:
             return try await chatCompletionsComplete(
-                key: key, model: model, baseURL: openRouterBaseURL, messages: messages,
+                key: key, model: model, baseURL: openRouterBaseURL,
+                authHeaders: ["Authorization": "Bearer \(key)"],
+                messages: messages,
                 system: system, tools: tools, maxTokens: maxTokens,
                 extraHeaders: ["HTTP-Referer": "https://github.com/Louis-CFM/coucou",
                                "X-Title": "Coucou"])
-        case .openAICompatible:
-            let base = store.customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .gemini:
+            // Gemini's OpenAI-compatible endpoint: same wire format, key via x-goog-api-key.
+            return try await chatCompletionsComplete(
+                key: key, model: model, baseURL: geminiBaseURL,
+                authHeaders: ["x-goog-api-key": key],
+                messages: messages,
+                system: system, tools: tools, maxTokens: maxTokens,
+                extraHeaders: [:])
+        case .nineRouter:
+            // 9Router (decolua/9router): local OpenAI-compatible gateway, default http://localhost:20128/v1.
+            let base = store.baseURL(for: .nineRouter)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
                 .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             guard !base.isEmpty else { throw AIProviderError.missingBaseURL }
             return try await chatCompletionsComplete(
-                key: key, model: model, baseURL: base, messages: messages,
-                system: system, tools: tools, maxTokens: maxTokens, extraHeaders: [:])
+                key: key, model: model, baseURL: base,
+                authHeaders: ["Authorization": "Bearer \(key)"],
+                messages: messages,
+                system: system, tools: tools, maxTokens: maxTokens,
+                extraHeaders: [:])
+        case .openAICompatible:
+            let base = store.baseURL(for: .openAICompatible)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard !base.isEmpty else { throw AIProviderError.missingBaseURL }
+            return try await chatCompletionsComplete(
+                key: key, model: model, baseURL: base,
+                authHeaders: ["Authorization": "Bearer \(key)"],
+                messages: messages,
+                system: system, tools: tools, maxTokens: maxTokens,
+                extraHeaders: [:])
         }
+    }
+
+    // MARK: - Model listing & connection test
+
+    /// Sorted model ids from the provider's `/models` endpoint.
+    /// Backs the "Load models" and "Test connection" buttons in Settings.
+    func listModels(kind: AIProviderKind) async throws -> [String] {
+        let store = AIProviderStore.shared
+        guard let key = store.apiKey(for: kind), !key.isEmpty else {
+            throw AIProviderError.missingKey(kind.displayName)
+        }
+
+        let endpoint: URL
+        var headers: [String: String] = [:]
+        switch kind {
+        case .anthropic:
+            endpoint = URL(string: "https://api.anthropic.com/v1/models")!
+            headers = ["x-api-key": key, "anthropic-version": anthropicVersion]
+        case .openRouter:
+            endpoint = URL(string: openRouterBaseURL + "/models")!
+            headers = ["Authorization": "Bearer \(key)"]
+        case .gemini:
+            endpoint = URL(string: geminiBaseURL + "/models")!
+            headers = ["x-goog-api-key": key]
+        case .nineRouter, .openAICompatible:
+            let base = store.baseURL(for: kind)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard !base.isEmpty else { throw AIProviderError.missingBaseURL }
+            guard let url = URL(string: base + "/models") else {
+                throw AIProviderError.badResponse("invalid base URL")
+            }
+            endpoint = url
+            headers = ["Authorization": "Bearer \(key)"]
+        }
+
+        var request = URLRequest(url: endpoint, timeoutInterval: 20)
+        for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw AIProviderError.badResponse("no HTTP response")
+        }
+        guard http.statusCode == 200 else {
+            throw AIProviderError.httpError(http.statusCode, "\(kind.displayName): request rejected")
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = json["data"] as? [[String: Any]] else {
+            throw AIProviderError.badResponse("unrecognized model list format")
+        }
+        return items.compactMap { $0["id"] as? String }.sorted()
     }
 
     // MARK: Anthropic Messages API
@@ -262,6 +388,7 @@ final class AIProviderClient {
     // MARK: OpenAI Chat Completions API (direct, OpenRouter, Ollama, Groq, ...)
 
     private func chatCompletionsComplete(key: String, model: String, baseURL: String,
+                                         authHeaders: [String: String],
                                          messages: [[String: Any]], system: String,
                                          tools: [MCPToolDefinition], maxTokens: Int,
                                          extraHeaders: [String: String]) async throws -> NormalizedResponse {
@@ -286,7 +413,7 @@ final class AIProviderClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        for (k, v) in authHeaders { request.setValue(v, forHTTPHeaderField: k) }
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         for (k, v) in extraHeaders { request.setValue(v, forHTTPHeaderField: k) }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)

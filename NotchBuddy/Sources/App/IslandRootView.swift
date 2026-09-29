@@ -119,7 +119,8 @@ struct IslandContainer: View {
                                     progress: state.uploadProgress,
                                     nw: state.notchWidth, nh: state.notchHeight)
             let cr  = newMode == .expanded ? IslandConst.expandedCorner : IslandConst.roundedCorner
-            let tr: CGFloat = 0
+            // Hidden: round all four corners (pill over the notch) instead of a sharp-top box.
+            let tr: CGFloat = newMode == .hidden ? IslandConst.roundedCorner : 0
             withAnimation(anim) {
                 islandWidth      = w
                 islandHeight     = (newMode == .expanded && state.view == .prompt) ? chatPromptHeight : h
@@ -154,7 +155,7 @@ struct IslandContainer: View {
             islandWidth      = w
             islandHeight     = state.view == .prompt ? chatPromptHeight : h
             cornerRadius     = state.mode == .expanded ? IslandConst.expandedCorner : IslandConst.roundedCorner
-            islandTopRadius  = 0
+            islandTopRadius  = state.mode == .hidden ? IslandConst.roundedCorner : 0
         }
         .onReceive(NotificationCenter.default.publisher(for: .botGreet)) { _ in
             greetNotif.toggle()

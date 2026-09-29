@@ -11,9 +11,15 @@ struct SettingsView: View {
     @State private var providerKind: AIProviderKind = AIProviderStore.shared.activeKind
     @State private var anthropicKey: String = KeychainStore.shared.get("anthropic-api-key") ?? ""
     @State private var openRouterKey: String = KeychainStore.shared.get("openrouter-api-key") ?? ""
+    @State private var geminiKey: String = KeychainStore.shared.get("gemini-api-key") ?? ""
+    @State private var nineKey: String = KeychainStore.shared.get("ninerouter-api-key") ?? ""
+    @State private var nineURL: String = AIProviderStore.shared.baseURL(for: .nineRouter)
     @State private var openCompKey: String = KeychainStore.shared.get("openaicomp-api-key") ?? ""
-    @State private var openCompURL: String = AIProviderStore.shared.customBaseURL
+    @State private var openCompURL: String = AIProviderStore.shared.baseURL(for: .openAICompatible)
     @State private var modelName: String = AIProviderStore.shared.model(for: AIProviderStore.shared.activeKind)
+    @State private var modelOptions: [String] = []
+    @State private var loadingModels: Bool = false
+    @State private var testingConnection: Bool = false
 
     // Skills
     @State private var skillURL: String = ""
@@ -69,12 +75,13 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Picker("Provider", selection: $providerKind) {
                             ForEach(AIProviderKind.allCases) { kind in
-                                Text(kind.displayName).tag(kind)
+                                Text(kind.pickerLabel).tag(kind)
                             }
                         }
                         .pickerStyle(.segmented)
                         .onChange(of: providerKind) { kind in
                             modelName = AIProviderStore.shared.model(for: kind)
+                            modelOptions = []
                         }
 
                         switch providerKind {
@@ -85,6 +92,20 @@ struct SettingsView: View {
                             SecureField(providerKind.keyPlaceholder, text: $openRouterKey)
                                 .textFieldStyle(.roundedBorder)
                             Text("One key for 300+ models. Get one at openrouter.ai")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        case .gemini:
+                            SecureField(providerKind.keyPlaceholder, text: $geminiKey)
+                                .textFieldStyle(.roundedBorder)
+                            Text("Get a free key at aistudio.google.com")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        case .nineRouter:
+                            TextField("Base URL  (http://localhost:20128/v1)", text: $nineURL)
+                                .textFieldStyle(.roundedBorder)
+                            SecureField(providerKind.keyPlaceholder, text: $nineKey)
+                                .textFieldStyle(.roundedBorder)
+                            Text("Local 9Router gateway (decolua/9router). Copy the API key from its dashboard.")
                                 .font(.system(size: 11))
                                 .foregroundColor(.secondary)
                         case .openAICompatible:
@@ -100,8 +121,29 @@ struct SettingsView: View {
                         TextField("Model", text: $modelName)
                             .textFieldStyle(.roundedBorder)
 
-                        Button("Save") { saveProvider() }
-                            .buttonStyle(.borderedProminent)
+                        if !modelOptions.isEmpty {
+                            Picker("Available models", selection: $modelName) {
+                                ForEach(modelOptions, id: \.self) { m in
+                                    Text(m).tag(m)
+                                }
+                            }
+                        }
+
+                        HStack {
+                            Button(loadingModels ? "Loading..." : "Load models") {
+                                loadModels()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(loadingModels || testingConnection)
+                            Button(testingConnection ? "Testing..." : "Test connection") {
+                                testConnection()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(loadingModels || testingConnection)
+                            Spacer()
+                            Button("Save") { saveProvider() }
+                                .buttonStyle(.borderedProminent)
+                        }
                     }
                     .padding(6)
                 }
@@ -511,22 +553,66 @@ struct SettingsView: View {
 
     // MARK: - AI provider
 
-    private func saveProvider() {
+    /// Persists the key/base-URL fields for the currently selected provider
+    /// without switching the active provider or clearing the conversation.
+    private func persistProviderFields() {
         let store = AIProviderStore.shared
-        store.activeKind = providerKind
-        store.setModel(modelName.trimmingCharacters(in: .whitespacesAndNewlines), for: providerKind)
         switch providerKind {
         case .anthropic:
             saveKey("anthropic-api-key", value: anthropicKey)
         case .openRouter:
             saveKey("openrouter-api-key", value: openRouterKey)
+        case .gemini:
+            saveKey("gemini-api-key", value: geminiKey)
+        case .nineRouter:
+            store.setBaseURL(nineURL.trimmingCharacters(in: .whitespacesAndNewlines), for: .nineRouter)
+            saveKey("ninerouter-api-key", value: nineKey)
         case .openAICompatible:
-            store.customBaseURL = openCompURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            store.setBaseURL(openCompURL.trimmingCharacters(in: .whitespacesAndNewlines), for: .openAICompatible)
             saveKey("openaicomp-api-key", value: openCompKey)
         }
+    }
+
+    private func saveProvider() {
+        persistProviderFields()
+        let store = AIProviderStore.shared
+        store.activeKind = providerKind
+        store.setModel(modelName.trimmingCharacters(in: .whitespacesAndNewlines), for: providerKind)
         // Clear conversation so the next turn uses the new provider/model.
         ClaudeService.shared.clearConversation()
         statusMessage = "✓ Provider saved: \(providerKind.displayName)."
+    }
+
+    private func loadModels() {
+        persistProviderFields()
+        loadingModels = true
+        Task {
+            do {
+                let ids = try await AIProviderClient.shared.listModels(kind: providerKind)
+                modelOptions = ids
+                if !ids.contains(modelName), let first = ids.first {
+                    modelName = first
+                }
+                statusMessage = "✓ \(ids.count) model(s) loaded from \(providerKind.displayName)."
+            } catch {
+                statusMessage = "❌ \(error.localizedDescription)"
+            }
+            loadingModels = false
+        }
+    }
+
+    private func testConnection() {
+        persistProviderFields()
+        testingConnection = true
+        Task {
+            do {
+                let ids = try await AIProviderClient.shared.listModels(kind: providerKind)
+                statusMessage = "✓ Connected to \(providerKind.displayName) (\(ids.count) model(s) available)."
+            } catch {
+                statusMessage = "❌ \(error.localizedDescription)"
+            }
+            testingConnection = false
+        }
     }
 
     // MARK: - Skills

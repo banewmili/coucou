@@ -90,3 +90,21 @@ this fork to your own GitHub repo; Actions run automatically.
 2. Settings > MCP Servers: add `npx -y @modelcontextprotocol/server-filesystem /tmp`,
    ask "list files in /tmp" and approve the tool call.
 3. Settings > Skills: install a skill repo URL, ask something the skill covers.
+
+## Gemini + 9Router providers, Load models / Test connection, rounded hidden island
+- `AIProviderKind` gains `gemini` and `nineRouter` alongside anthropic/openRouter/openAICompatible.
+  - Gemini talks to Google's OpenAI-compatible endpoint
+    `https://generativelanguage.googleapis.com/v1beta/openai` (API key via
+    `x-goog-api-key` header); default model `gemini-2.5-flash`.
+  - 9Router (decolua/9router) is OpenAI-compatible with a configurable base URL,
+    default `http://localhost:20128/v1` (API key copied from the 9Router dashboard);
+    default model `kr/claude-sonnet-4.5`.
+- Base URLs are now stored per provider (`baseURLs` dict in `AIProviderSettings`;
+  legacy `customBaseURL` is auto-migrated into it on load).
+- Settings > AI Provider adds **Load models** (fetches `/models` from the provider,
+  fills a model picker) and **Test connection** (same endpoint as a lightweight
+  auth check) buttons.
+- Hidden island is now a fully rounded pill (`islandTopRadius = roundedCorner` in
+  hidden mode) instead of a sharp-top box (`IslandRootView`).
+Not compile-verified locally: push to GitHub and let the CI build (Xcode 16) —
+paste any errors back here for fixing.
