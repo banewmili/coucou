@@ -565,7 +565,7 @@ struct GreetingCanvasView: View {
                 }
             }
             // Fire greetComplete exactly once at T.end (when no hover)
-            .onChange(of: !greetFired && t >= GT.end && tc >= GT.autoLeave) { _, trigger in
+            .onChange(of: !greetFired && t >= GT.end && tc >= GT.autoLeave) { trigger in
                 if trigger { fireGreetComplete() }
             }
         }

@@ -73,7 +73,7 @@ struct SettingsView: View {
                             }
                         }
                         .pickerStyle(.segmented)
-                        .onChange(of: providerKind) { _, kind in
+                        .onChange(of: providerKind) { kind in
                             modelName = AIProviderStore.shared.model(for: kind)
                         }
 
@@ -329,8 +329,8 @@ struct SettingsView: View {
                                 Text("Shortcut")
                                     .frame(width: 70, alignment: .leading)
                                 ShortcutRecorderButton(flags: $hotkeyFlags, code: $hotkeyCode)
-                                    .onChange(of: hotkeyFlags) { _, v in state.hotkeyFlags = v }
-                                    .onChange(of: hotkeyCode)  { _, v in state.hotkeyCode  = v }
+                                    .onChange(of: hotkeyFlags) { v in state.hotkeyFlags = v }
+                                    .onChange(of: hotkeyCode)  { v in state.hotkeyCode  = v }
                                 Text("presses this → island opens")
                                     .font(.system(size: 11))
                                     .foregroundColor(.secondary)
@@ -449,7 +449,7 @@ struct SettingsView: View {
                 // MARK: Startup
                 GroupBox("Startup") {
                     Toggle("Launch at Mac startup", isOn: $launchAtStartup)
-                        .onChange(of: launchAtStartup) { _, on in toggleStartup(on) }
+                        .onChange(of: launchAtStartup) { on in toggleStartup(on) }
                         .padding(6)
                 }
 

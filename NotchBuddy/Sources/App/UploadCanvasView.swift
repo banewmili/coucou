@@ -28,7 +28,7 @@ struct UploadCanvasView: View {
                 }
             }
         }
-        .onChange(of: state.droppedFile?.url) { _, url in
+        .onChange(of: state.droppedFile?.url) { url in
             if let url { loadIcon(url: url) }
         }
         .onAppear {

@@ -47,7 +47,8 @@ final class MCPConnection: @unchecked Sendable {
     private var started = false
 
     var isRunning: Bool {
-        lock.withLock { started && process.isRunning }
+        lock.lock(); defer { lock.unlock() }
+        return started && process.isRunning
     }
 
     /// Starts the server. `command` may be a bare binary name; common install
@@ -85,17 +86,20 @@ final class MCPConnection: @unchecked Sendable {
         } catch {
             throw MCPError.spawnFailed(error.localizedDescription)
         }
-        lock.withLock { started = true }
+        lock.lock()
+        started = true
+        lock.unlock()
     }
 
     func stop() {
-        lock.withLock {
-            started = false
-            let stale = pending
-            pending.removeAll()
-            for (_, cont) in stale {
-                cont.resume(throwing: MCPError.notRunning(name))
-            }
+        let stale: [CheckedContinuation<Any, Error>]
+        lock.lock()
+        started = false
+        stale = Array(pending.values)
+        pending.removeAll()
+        lock.unlock()
+        for cont in stale {
+            cont.resume(throwing: MCPError.notRunning(name))
         }
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
         if process.isRunning { process.terminate() }
@@ -147,11 +151,10 @@ final class MCPConnection: @unchecked Sendable {
 
     private func sendRequest(method: String, params: [String: Any],
                              timeout: TimeInterval = 120) async throws -> Any {
-        let id: Int = lock.withLock {
-            let current = nextId
-            nextId += 1
-            return current
-        }
+        lock.lock()
+        let id: Int = nextId
+        nextId += 1
+        lock.unlock()
         var message: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method]
         if !params.isEmpty { message["params"] = params }
         let line = try JSONSerialization.data(withJSONObject: message)
@@ -159,13 +162,17 @@ final class MCPConnection: @unchecked Sendable {
         return try await withThrowingTaskGroup(of: Any.self) { group in
             group.addTask {
                 try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Any, Error>) in
-                    self.lock.withLock { self.pending[id] = cont }
+                    self.lock.lock()
+                    self.pending[id] = cont
+                    self.lock.unlock()
                     do {
                         var framed = line
                         framed.append(0x0A)
                         try self.stdinPipe.fileHandleForWriting.write(contentsOf: framed)
                     } catch {
-                        self.lock.withLock { self.pending.removeValue(forKey: id) }
+                        self.lock.lock()
+                        self.pending.removeValue(forKey: id)
+                        self.lock.unlock()
                         cont.resume(throwing: error)
                     }
                 }
@@ -192,13 +199,13 @@ final class MCPConnection: @unchecked Sendable {
 
     private func didReceiveData(_ data: Data) {
         var lines: [Data] = []
-        lock.withLock {
-            readBuffer.append(data)
-            while let range = readBuffer.range(of: Data([0x0A])) {
-                lines.append(readBuffer.subdata(in: readBuffer.startIndex..<range.lowerBound))
-                readBuffer.removeSubrange(readBuffer.startIndex..<range.upperBound)
-            }
+        lock.lock()
+        readBuffer.append(data)
+        while let range = readBuffer.range(of: Data([0x0A])) {
+            lines.append(readBuffer.subdata(in: readBuffer.startIndex..<range.lowerBound))
+            readBuffer.removeSubrange(readBuffer.startIndex..<range.upperBound)
         }
+        lock.unlock()
         for line in lines { didReceiveLine(line) }
     }
 
@@ -213,11 +220,10 @@ final class MCPConnection: @unchecked Sendable {
         else if let idNum = json["id"] as? NSNumber { idValue = idNum.intValue }
         guard let id = idValue else { return }
 
-        let cont: CheckedContinuation<Any, Error>? = lock.withLock {
-            let c = pending[id]
-            pending.removeValue(forKey: id)
-            return c
-        }
+        lock.lock()
+        let cont: CheckedContinuation<Any, Error>? = pending[id]
+        pending.removeValue(forKey: id)
+        lock.unlock()
         guard let cont else { return }
 
         if let error = json["error"] as? [String: Any] {

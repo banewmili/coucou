@@ -28,6 +28,8 @@ struct IslandContainer: View {
     // topRadius > 0 → convex expanded corners; < 0 → concave ear cutouts
     @State private var islandTopRadius: CGFloat = 0
     @State private var greetNotif: Bool = false
+    // Tracks the previous mode for one-param onChange (macOS 13 compatible).
+    @State private var previousMode: IslandMode = AppState.shared.mode
 
     private let openSpring = Animation.spring(response: 0.5, dampingFraction: 0.72)
     private let closeEase  = Animation.timingCurve(0.45, 0, 0.2, 1, duration: 0.34)
@@ -110,8 +112,8 @@ struct IslandContainer: View {
             .animation(.easeInOut(duration: 0.25), value: state.mode == .compact)
         }
         .frame(width: islandWidth, height: islandHeight, alignment: .topLeading)
-        .onChange(of: state.mode) { oldMode, newMode in
-            let shrinking = modeOrder(newMode) < modeOrder(oldMode)
+        .onChange(of: state.mode) { newMode in
+            let shrinking = modeOrder(newMode) < modeOrder(previousMode)
             let anim = shrinking ? closeEase : openSpring
             let (w, h) = islandSize(mode: newMode, view: state.view,
                                     progress: state.uploadProgress,
@@ -124,8 +126,9 @@ struct IslandContainer: View {
                 cornerRadius     = cr
                 islandTopRadius  = tr
             }
+            previousMode = newMode
         }
-        .onChange(of: state.view) { _, newView in
+        .onChange(of: state.view) { newView in
             guard state.mode == .expanded else { return }
             // Deactivate engine if user navigates outside the upload flow
             let uploadViews: Set<IslandView> = [.upload, .uploading, .choose]
@@ -140,7 +143,7 @@ struct IslandContainer: View {
                 islandHeight = newView == .prompt ? chatPromptHeight : h
             }
         }
-        .onChange(of: state.chatHistory.count) { _, _ in
+        .onChange(of: state.chatHistory.count) { _ in
             guard state.mode == .expanded, state.view == .prompt else { return }
             withAnimation(openSpring) { islandHeight = chatPromptHeight }
         }

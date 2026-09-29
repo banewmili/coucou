@@ -82,22 +82,24 @@ final class KeychainStore: @unchecked Sendable {
 
     /// Thread-safe read — never touches the Keychain.
     func get(_ key: String) -> String? {
-        lock.withLock { cache[key] }
+        lock.lock(); defer { lock.unlock() }
+        return cache[key]
     }
 
     /// Updates cache + persists to Keychain.
     func set(_ key: String, value: String) {
-        lock.withLock { cache[key] = value }
+        lock.lock()
+        cache[key] = value
+        lock.unlock()
         Keychain.save(key: key, value: value)
     }
 
     /// Removes from cache + Keychain only if the key was previously set.
     func remove(_ key: String) {
-        let had = lock.withLock { () -> Bool in
-            let exists = cache[key] != nil
-            cache[key] = nil
-            return exists
-        }
+        lock.lock()
+        let had = cache[key] != nil
+        cache[key] = nil
+        lock.unlock()
         if had { Keychain.delete(key: key) }
     }
 }

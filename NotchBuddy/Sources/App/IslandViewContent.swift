@@ -110,7 +110,7 @@ struct OverviewView: View {
                 AgentPillsView(state: state)
             }
         }
-        .onChange(of: state.focusId) { _, _ in showingN8nDetail = false }
+        .onChange(of: state.focusId) { _ in showingN8nDetail = false }
     }
 
     private func openAgentTarget(_ task: AgentTask?) {
@@ -376,7 +376,7 @@ struct UploadView: View {
             .padding(.leading, 196)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .onChange(of: state.view) { _, newView in
+        .onChange(of: state.view) { newView in
             newView == .upload ? startTimer() : stopTimer()
         }
         .onAppear {
@@ -721,12 +721,12 @@ struct PromptView: View {
                             }
                             .padding(.vertical, 2)
                         }
-                        .onChange(of: state.chatHistory.count) { _, _ in
+                        .onChange(of: state.chatHistory.count) { _ in
                             if let last = state.chatHistory.last {
                                 withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                             }
                         }
-                        .onChange(of: state.stateOverride) { _, v in
+                        .onChange(of: state.stateOverride) { v in
                             if v != nil { withAnimation { proxy.scrollTo("typing", anchor: .bottom) } }
                         }
                         .onAppear {
@@ -1656,7 +1656,7 @@ struct CalcomCardView: View {
                 )
             }
         }
-        .onChange(of: appState.focusId) { _, _ in
+        .onChange(of: appState.focusId) { _ in
             selectedDate = nil; selectedBooking = nil; displayHalf = 1
         }
     }
@@ -2098,7 +2098,7 @@ struct TickerView: View {
                 rowB = steps[min(idx, steps.count - 1)]
             }
         }
-        .onChange(of: task?.steps.count) { _, _ in
+        .onChange(of: task?.steps.count) { _ in
             guard let task, !task.steps.isEmpty, !isTransitioning else { return }
             let newIdx = task.stepIndex
             if displayIndex < 0 {
