@@ -19,7 +19,7 @@ struct IslandViewContent: View {
         case .uploading: UploadingView(state: state)
         case .choose:    ChooseView(state: state)
         case .mail:      MailView(state: state)
-        case .prompt:    PromptWithTerminalView(state: state)
+        case .prompt:    PromptView(state: state)
         case .searching: SearchingView(state: state)
         case .result:    ResultView(state: state)
         case .note:      NoteView(state: state)
@@ -783,93 +783,6 @@ struct PromptView: View {
             await ClaudeService.shared.chat(query: query, context: state.promptContext, state: state)
             await MainActor.run { focused = true }
         }
-    }
-}
-
-
-// MARK: - Chat + terminal side by side (expanded prompt view)
-
-struct PromptWithTerminalView: View {
-    @ObservedObject var state: AppState
-
-    var body: some View {
-        HStack(spacing: 12) {
-            PromptView(state: state)
-                .frame(width: IslandConst.expandedWidth)
-            if state.showTerminal {
-                TerminalIslandPanel(state: state)
-                    .frame(width: IslandConst.terminalPanelWidth)
-                    .frame(maxHeight: .infinity)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            }
-        }
-    }
-}
-
-struct TerminalIslandPanel: View {
-    @ObservedObject var state: AppState
-    @ObservedObject private var term = TerminalManager.shared
-    @State private var command: String = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "terminal.fill")
-                    .font(.system(size: 11))
-                    .foregroundColor(Color(hex: "#8E939C"))
-                Text("Terminal")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(Color(hex: "#B0B5BE"))
-                Spacer()
-                Button(action: {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                        state.showTerminal = false
-                    }
-                }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(Color(hex: "#8E939C"))
-                }
-                .buttonStyle(.plain)
-            }
-
-            ScrollViewReader { proxy in
-                ScrollView {
-                    Text(term.lines.joined(separator: "\n"))
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundColor(Color(hex: "#D7DADE"))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                        .id("islandTermEnd")
-                        .padding(8)
-                }
-                .background(Color.black.opacity(0.35))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .onChange(of: term.lines.count) { _ in
-                    proxy.scrollTo("islandTermEnd", anchor: .bottom)
-                }
-            }
-
-            HStack(spacing: 6) {
-                Text("$")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(Color(hex: "#8E939C"))
-                TextField("command, e.g. brew install node", text: $command)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(Color(hex: "#F5F6F8"))
-                    .onSubmit { submit() }
-            }
-            .padding(.horizontal, 8).padding(.vertical, 6)
-            .background(Color.white.opacity(0.07))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .padding(10)
-    }
-
-    private func submit() {
-        term.run(command)
-        command = ""
     }
 }
 

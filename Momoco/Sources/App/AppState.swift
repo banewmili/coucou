@@ -31,8 +31,6 @@ final class AppState: ObservableObject {
     // Island state
     @Published var mode: IslandMode = .hidden
     @Published var view: IslandView = .overview
-    /// Terminal side panel next to the chat (expanded prompt view).
-    @Published var showTerminal: Bool = false
 
     // Tasks
     @Published var tasks: [AgentTask] = []

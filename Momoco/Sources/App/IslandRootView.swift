@@ -108,8 +108,7 @@ struct IslandContainer: View {
             let anim = shrinking ? closeEase : openSpring
             let (w, h) = islandSize(mode: newMode, view: state.view,
                                     progress: state.uploadProgress,
-                                    nw: state.notchWidth, nh: state.notchHeight,
-                                    showTerminal: state.showTerminal)
+                                    nw: state.notchWidth, nh: state.notchHeight)
             // Expanded keeps its large rounded rect; hidden/compact are a fully
             // rounded pill (344x32 on notch-less Macs, like the reference shot).
             let pillR: CGFloat = state.notchHeight / 2
@@ -132,20 +131,11 @@ struct IslandContainer: View {
             }
             let (w, h) = islandSize(mode: .expanded, view: newView,
                                     progress: state.uploadProgress,
-                                    nw: state.notchWidth, nh: state.notchHeight,
-                                    showTerminal: state.showTerminal)
+                                    nw: state.notchWidth, nh: state.notchHeight)
             withAnimation(openSpring) {
                 islandWidth  = w
                 islandHeight = newView == .prompt ? chatPromptHeight : h
             }
-        }
-        .onChange(of: state.showTerminal) { _ in
-            guard state.mode == .expanded else { return }
-            let (w, _) = islandSize(mode: .expanded, view: state.view,
-                                    progress: state.uploadProgress,
-                                    nw: state.notchWidth, nh: state.notchHeight,
-                                    showTerminal: state.showTerminal)
-            withAnimation(openSpring) { islandWidth = w }
         }
         .onChange(of: state.chatHistory.count) { _ in
             guard state.mode == .expanded, state.view == .prompt else { return }
@@ -154,8 +144,7 @@ struct IslandContainer: View {
         .onAppear {
             let (w, h) = islandSize(mode: state.mode, view: state.view,
                                     progress: state.uploadProgress,
-                                    nw: state.notchWidth, nh: state.notchHeight,
-                                    showTerminal: state.showTerminal)
+                                    nw: state.notchWidth, nh: state.notchHeight)
             islandWidth      = w
             islandHeight     = state.view == .prompt ? chatPromptHeight : h
             let pillR: CGFloat = state.notchHeight / 2
@@ -479,23 +468,6 @@ struct IslandHeader: View {
                         state.promptContext = WindowContextCapture.captureActive(from: state.lastExternalApp)
                     }
                 })
-                // Terminal side panel (beside the chat)
-                Button(action: {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                        if !state.showTerminal && state.view != .prompt {
-                            state.view = .prompt
-                        }
-                        state.showTerminal.toggle()
-                    }
-                }) {
-                    Image(systemName: state.showTerminal ? "terminal.fill" : "terminal")
-                        .font(.system(size: 13))
-                        .foregroundColor(state.showTerminal ? Color(hex: "#F5F6F8") : Color(hex: "#8E939C"))
-                        .frame(width: 30, height: 22)
-                        .background(state.showTerminal ? Color(hex: "#1D1F23") : Color.clear)
-                        .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
                 TabButton(icon: "plus", view: .upload, state: state)
             }
             .padding(.leading, 14)
