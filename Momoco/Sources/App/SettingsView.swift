@@ -188,7 +188,7 @@ struct SettingsView: View {
                         ConnectedAppRow(name: "Cal.com", detail: "Scheduling", connected: !calcomKey.isEmpty)
                         ConnectedAppRow(name: "Notion", detail: "Notes", connected: !notionKey.isEmpty)
 
-                        Text("Add more via MCP Servers below, or install tools from the Terminal.")
+                        Text("Add more via MCP Servers below.")
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                     }
@@ -533,11 +533,6 @@ struct SettingsView: View {
                         }
                     }
                     .padding(6)
-                }
-
-                // MARK: Terminal
-                GroupBox("Terminal") {
-                    TerminalView()
                 }
 
                 // MARK: Startup
