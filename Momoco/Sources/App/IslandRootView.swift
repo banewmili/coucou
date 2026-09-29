@@ -101,15 +101,6 @@ struct IslandContainer: View {
                 .animation(.easeInOut(duration: 0.25), value: uploadActive || greetingActive)
 
             CountdownBar(state: state, islandW: islandWidth)
-
-            Group {
-                if state.mode == .compact {
-                    CompactMiniGrid(state: state)
-                        .position(x: islandWidth - 40, y: islandHeight / 2)
-                        .transition(.opacity)
-                }
-            }
-            .animation(.easeInOut(duration: 0.25), value: state.mode == .compact)
         }
         .frame(width: islandWidth, height: islandHeight, alignment: .topLeading)
         .onChange(of: state.mode) { newMode in
@@ -349,7 +340,7 @@ struct BotPlacement: View {
 func botPosition(mode: IslandMode, view: IslandView, islandW: CGFloat, islandH: CGFloat, uploadProgress: Double) -> (CGFloat, CGFloat, CGFloat, Double) {
     switch mode {
     case .hidden:   return (46, 16, 6, 0)
-    case .compact:  return (40, 16, 20, 1)
+    case .compact:  return (islandW / 2, 16, 20, 1)
     case .expanded:
         let layout = IslandConst.viewLayouts[view]!
         let diameter = layout.botDiameter

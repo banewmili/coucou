@@ -20,6 +20,8 @@ struct SettingsView: View {
     @State private var modelOptions: [String] = []
     @State private var loadingModels: Bool = false
     @State private var testingConnection: Bool = false
+    @State private var connectionStatus: String = ""
+    @State private var connectionOK: Bool = false
 
     // Skills
     @State private var skillURL: String = ""
@@ -82,6 +84,7 @@ struct SettingsView: View {
                         .onChange(of: providerKind) { kind in
                             modelName = AIProviderStore.shared.model(for: kind)
                             modelOptions = []
+                            connectionStatus = ""
                         }
 
                         switch providerKind {
@@ -144,6 +147,50 @@ struct SettingsView: View {
                             Button("Save") { saveProvider() }
                                 .buttonStyle(.borderedProminent)
                         }
+
+                        if !connectionStatus.isEmpty {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(connectionOK ? Color.green : Color.red)
+                                    .frame(width: 8, height: 8)
+                                Text(connectionStatus)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(connectionOK ? .primary : .red)
+                            }
+                            .padding(.top, 2)
+                        }
+                    }
+                    .padding(6)
+                }
+
+                // MARK: Connected Apps
+                GroupBox("Connected Apps") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Apps connected directly to Momoco.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+
+                        ConnectedAppRow(name: "AI Provider",
+                                        detail: AIProviderStore.shared.activeKind.displayName,
+                                        connected: connectionOK)
+
+                        ForEach(mcp.servers) { server in
+                            ConnectedAppRow(name: server.name,
+                                            detail: "MCP · \(server.command)",
+                                            connected: mcp.connectedIds.contains(server.id))
+                        }
+
+                        ConnectedAppRow(name: "Resend", detail: "Email", connected: !resendKey.isEmpty)
+                        ConnectedAppRow(name: "n8n", detail: "Automation", connected: !n8nKey.isEmpty)
+                        ConnectedAppRow(name: "Vercel", detail: "Hosting", connected: !vercelToken.isEmpty)
+                        ConnectedAppRow(name: "GitHub", detail: "Code", connected: !githubToken.isEmpty)
+                        ConnectedAppRow(name: "Stripe", detail: "Payments", connected: !stripeKey.isEmpty)
+                        ConnectedAppRow(name: "Cal.com", detail: "Scheduling", connected: !calcomKey.isEmpty)
+                        ConnectedAppRow(name: "Notion", detail: "Notes", connected: !notionKey.isEmpty)
+
+                        Text("Add more via MCP Servers below, or install tools from the Terminal.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
                     }
                     .padding(6)
                 }
@@ -488,6 +535,11 @@ struct SettingsView: View {
                     .padding(6)
                 }
 
+                // MARK: Terminal
+                GroupBox("Terminal") {
+                    TerminalView()
+                }
+
                 // MARK: Startup
                 GroupBox("Startup") {
                     Toggle("Launch at Mac startup", isOn: $launchAtStartup)
@@ -604,12 +656,19 @@ struct SettingsView: View {
     private func testConnection() {
         persistProviderFields()
         testingConnection = true
+        connectionStatus = ""
         Task {
             do {
                 let ids = try await AIProviderClient.shared.listModels(kind: providerKind)
-                statusMessage = "✓ Connected to \(providerKind.displayName) (\(ids.count) model(s) available)."
+                let msg = "Connected to \(providerKind.displayName) (\(ids.count) model(s) available)."
+                statusMessage = "✓ " + msg
+                connectionStatus = msg
+                connectionOK = true
             } catch {
-                statusMessage = "❌ \(error.localizedDescription)"
+                let msg = "Connection failed: \(error.localizedDescription)"
+                statusMessage = "❌ " + msg
+                connectionStatus = msg
+                connectionOK = false
             }
             testingConnection = false
         }
