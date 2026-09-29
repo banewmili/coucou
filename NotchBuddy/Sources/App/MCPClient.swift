@@ -172,13 +172,13 @@ final class MCPConnection: @unchecked Sendable {
         return try await withThrowingTaskGroup(of: SendableJSON.self) { group in
             group.addTask {
                 try await withCheckedThrowingContinuation { (cont: CheckedContinuation<SendableJSON, Error>) in
-                    lock.withLock { self.pending[id] = cont }
+                    self.lock.withLock { self.pending[id] = cont }
                     do {
                         var framed = line
                         framed.append(0x0A)
                         try self.stdinPipe.fileHandleForWriting.write(contentsOf: framed)
                     } catch {
-                        lock.withLock { self.pending.removeValue(forKey: id) }
+                        self.lock.withLock { self.pending.removeValue(forKey: id) }
                         cont.resume(throwing: error)
                     }
                 }
