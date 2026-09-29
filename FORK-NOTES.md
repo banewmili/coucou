@@ -108,3 +108,24 @@ this fork to your own GitHub repo; Actions run automatically.
   hidden mode) instead of a sharp-top box (`IslandRootView`).
 Not compile-verified locally: push to GitHub and let the CI build (Xcode 16) —
 paste any errors back here for fixing.
+
+## Rebrand to Momoco
+The fork is rebranded from Coucou to **Momoco** (upstream name, Mochi
+character, icons and sounds are reserved per LICENSE-ASSETS.md and must not
+ship in a distributed derivative):
+- App/target/scheme renamed NotchBuddy → Momoco; display name Coucou → Momoco;
+  bundle ID `fr.louisraille.NotchBuddy` → `com.banewmili.momoco`.
+- Internal renames: notification names `notchBuddy.*` → `momoco.*`, UserDefaults
+  key `coucou.ai-provider-settings` → `momoco.ai-provider-settings`, support dir
+  `~/Library/Application Support/NotchBuddy` → `.../Momoco`, hook script
+  `nb-hook` → `momoco-hook`, socket `nb.sock` → `momoco.sock`, state `.coucou` →
+  `.momoco`, `Mochi*`/`mochi*` identifiers → `Momoco*`/`momoco*`; system prompt
+  de-personalized ("You are Momoco, a personal AI assistant...").
+- New original artwork: AppIcon (violet gradient + geometric M + notch pill) and
+  MenuBarIcon (black pill) replace the upstream Mochi artwork.
+- Sounds in `Resources/sounds/` are still the upstream files — replace with
+  original sounds before distributing.
+- Docs, README, site pages, issue templates, and CI workflows renamed;
+  `Coucou-macOS.zip` artifact → `Momoco-macOS.zip`.
+- GitHub repo itself is still named `banewmili/coucou` — rename it in repo
+  settings and update the `origin` remote when ready.

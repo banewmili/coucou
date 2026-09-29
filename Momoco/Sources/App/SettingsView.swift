@@ -1,0 +1,855 @@
+import SwiftUI
+import ServiceManagement
+import AppKit
+
+struct SettingsView: View {
+    @ObservedObject private var state = AppState.shared
+    @ObservedObject private var skills = SkillManager.shared
+    @ObservedObject private var mcp = MCPManager.shared
+
+    // AI provider
+    @State private var providerKind: AIProviderKind = AIProviderStore.shared.activeKind
+    @State private var anthropicKey: String = KeychainStore.shared.get("anthropic-api-key") ?? ""
+    @State private var openRouterKey: String = KeychainStore.shared.get("openrouter-api-key") ?? ""
+    @State private var geminiKey: String = KeychainStore.shared.get("gemini-api-key") ?? ""
+    @State private var nineKey: String = KeychainStore.shared.get("ninerouter-api-key") ?? ""
+    @State private var nineURL: String = AIProviderStore.shared.baseURL(for: .nineRouter)
+    @State private var openCompKey: String = KeychainStore.shared.get("openaicomp-api-key") ?? ""
+    @State private var openCompURL: String = AIProviderStore.shared.baseURL(for: .openAICompatible)
+    @State private var modelName: String = AIProviderStore.shared.model(for: AIProviderStore.shared.activeKind)
+    @State private var modelOptions: [String] = []
+    @State private var loadingModels: Bool = false
+    @State private var testingConnection: Bool = false
+
+    // Skills
+    @State private var skillURL: String = ""
+    @State private var installingSkill: Bool = false
+
+    // MCP
+    @State private var mcpName: String = ""
+    @State private var mcpCommand: String = ""
+    @State private var mcpArgs: String = ""
+
+    @State private var launchAtStartup: Bool = (SMAppService.mainApp.status == .enabled)
+    @State private var statusMessage: String = ""
+    @State private var showDiff: Bool = false
+    @State private var pendingHookJSON: String = ""
+
+    // Integration keys
+    @State private var resendKey: String    = KeychainStore.shared.get("resend-api-key")  ?? ""
+    @State private var resendFrom: String   = KeychainStore.shared.get("resend-from")     ?? ""
+    @State private var n8nUrl: String       = KeychainStore.shared.get("n8n-url")         ?? ""
+    @State private var n8nKey: String       = KeychainStore.shared.get("n8n-api-key")     ?? ""
+    @State private var vercelToken: String  = KeychainStore.shared.get("vercel-token")    ?? ""
+    @State private var githubToken: String  = KeychainStore.shared.get("github-token")    ?? ""
+    @State private var stripeKey: String    = KeychainStore.shared.get("stripe-api-key")  ?? ""
+    @State private var calcomKey: String    = KeychainStore.shared.get("calcom-api-key")  ?? ""
+    @State private var notionKey: String    = KeychainStore.shared.get("notion-api-key")  ?? ""
+
+    // Hotkey
+    @State private var hotkeyFlags: UInt    = AppState.shared.hotkeyFlags
+    @State private var hotkeyCode: UInt16   = AppState.shared.hotkeyCode
+
+    // Vercel project filter
+    @State private var vercelProjects: [String] = []
+    @State private var loadingVercel: Bool = false
+
+    // n8n workflow filter
+    @State private var n8nWorkflows: [String] = []
+    @State private var loadingN8n: Bool = false
+
+    // Bindings in minutes for the absence field
+    private var absenceMinutes: Binding<Double> {
+        Binding(
+            get: { state.absenceInterval / 60 },
+            set: { state.absenceInterval = max(1, $0) * 60 }
+        )
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+
+                // MARK: AI Provider
+                GroupBox("AI Provider") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("Provider", selection: $providerKind) {
+                            ForEach(AIProviderKind.allCases) { kind in
+                                Text(kind.pickerLabel).tag(kind)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .onChange(of: providerKind) { kind in
+                            modelName = AIProviderStore.shared.model(for: kind)
+                            modelOptions = []
+                        }
+
+                        switch providerKind {
+                        case .anthropic:
+                            SecureField(providerKind.keyPlaceholder, text: $anthropicKey)
+                                .textFieldStyle(.roundedBorder)
+                        case .openRouter:
+                            SecureField(providerKind.keyPlaceholder, text: $openRouterKey)
+                                .textFieldStyle(.roundedBorder)
+                            Text("One key for 300+ models. Get one at openrouter.ai")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        case .gemini:
+                            SecureField(providerKind.keyPlaceholder, text: $geminiKey)
+                                .textFieldStyle(.roundedBorder)
+                            Text("Get a free key at aistudio.google.com")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        case .nineRouter:
+                            TextField("Base URL  (http://localhost:20128/v1)", text: $nineURL)
+                                .textFieldStyle(.roundedBorder)
+                            SecureField(providerKind.keyPlaceholder, text: $nineKey)
+                                .textFieldStyle(.roundedBorder)
+                            Text("Local 9Router gateway (decolua/9router). Copy the API key from its dashboard.")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        case .openAICompatible:
+                            TextField("Base URL  (https://.../v1)", text: $openCompURL)
+                                .textFieldStyle(.roundedBorder)
+                            SecureField(providerKind.keyPlaceholder, text: $openCompKey)
+                                .textFieldStyle(.roundedBorder)
+                            Text("OpenAI, Groq, DeepSeek, Ollama (http://localhost:11434/v1), ...")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+
+                        TextField("Model", text: $modelName)
+                            .textFieldStyle(.roundedBorder)
+
+                        if !modelOptions.isEmpty {
+                            Picker("Available models", selection: $modelName) {
+                                ForEach(modelOptions, id: \.self) { m in
+                                    Text(m).tag(m)
+                                }
+                            }
+                        }
+
+                        HStack {
+                            Button(loadingModels ? "Loading..." : "Load models") {
+                                loadModels()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(loadingModels || testingConnection)
+                            Button(testingConnection ? "Testing..." : "Test connection") {
+                                testConnection()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(loadingModels || testingConnection)
+                            Spacer()
+                            Button("Save") { saveProvider() }
+                                .buttonStyle(.borderedProminent)
+                        }
+                    }
+                    .padding(6)
+                }
+
+                // MARK: Hooks
+                GroupBox("Hooks Claude Code") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("momoco-hook : \(HookServer.hookScriptPath)")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.secondary)
+
+                        HStack(spacing: 10) {
+                            Button("Install hooks") { installHooks() }
+                                .buttonStyle(.borderedProminent)
+                            Button("Uninstall") { uninstallHooks() }
+                                .buttonStyle(.bordered)
+                        }
+
+                        if showDiff {
+                            ScrollView {
+                                Text(pendingHookJSON)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(height: 140)
+                            .background(Color(NSColor.textBackgroundColor))
+                            .cornerRadius(6)
+
+                            HStack {
+                                Button("Confirm & write") { confirmInstall() }
+                                    .buttonStyle(.borderedProminent)
+                                Button("Cancel") { showDiff = false; pendingHookJSON = "" }
+                                    .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                    .padding(6)
+                }
+
+                // MARK: Integrations
+                GroupBox("Integrations") {
+                    VStack(alignment: .leading, spacing: 14) {
+
+                        // Resend
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 6) {
+                                Circle().fill(Color(hex: "#22C55E")).frame(width: 8, height: 8)
+                                Text("Resend").font(.system(size: 12, weight: .semibold))
+                            }
+                            SecureField("API key  (re_…)", text: $resendKey)
+                                .textFieldStyle(.roundedBorder)
+                            TextField("From address  (you@yourdomain.com)", text: $resendFrom)
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        // n8n
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 6) {
+                                Circle().fill(Color(hex: "#F29B38")).frame(width: 8, height: 8)
+                                Text("n8n").font(.system(size: 12, weight: .semibold))
+                            }
+                            TextField("Instance URL  (https://…)", text: $n8nUrl)
+                                .textFieldStyle(.roundedBorder)
+                            SecureField("API key", text: $n8nKey)
+                                .textFieldStyle(.roundedBorder)
+                            IntegrationFilterRow(
+                                label: "Workflows",
+                                items: n8nWorkflows,
+                                filter: $state.n8nWorkflowFilter,
+                                loading: loadingN8n,
+                                onLoad: loadN8nWorkflows
+                            )
+                        }
+
+                        // Vercel
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 6) {
+                                Circle().fill(Color(hex: "#7C5CFF")).frame(width: 8, height: 8)
+                                Text("Vercel").font(.system(size: 12, weight: .semibold))
+                            }
+                            SecureField("Token", text: $vercelToken)
+                                .textFieldStyle(.roundedBorder)
+                            IntegrationFilterRow(
+                                label: "Projects",
+                                items: vercelProjects,
+                                filter: $state.vercelProjectFilter,
+                                loading: loadingVercel,
+                                onLoad: loadVercelProjects
+                            )
+                        }
+
+                        // GitHub
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 6) {
+                                Circle().fill(Color(hex: "#F4505E")).frame(width: 8, height: 8)
+                                Text("GitHub").font(.system(size: 12, weight: .semibold))
+                            }
+                            SecureField("Personal Access Token", text: $githubToken)
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        // Stripe
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 6) {
+                                Circle().fill(Color(hex: "#0570DE")).frame(width: 8, height: 8)
+                                Text("Stripe").font(.system(size: 12, weight: .semibold))
+                            }
+                            SecureField("Secret key  (sk_live_… or sk_test_…)", text: $stripeKey)
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        // Cal.com
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 6) {
+                                Circle().fill(Color(hex: "#C9956A")).frame(width: 8, height: 8)
+                                Text("Cal.com").font(.system(size: 12, weight: .semibold))
+                            }
+                            SecureField("API key  (cal_live_…)", text: $calcomKey)
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        // Notion
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 6) {
+                                Circle().fill(Color(hex: "#E8E8E8")).frame(width: 8, height: 8)
+                                Text("Notion").font(.system(size: 12, weight: .semibold))
+                            }
+                            SecureField("Integration token  (secret_…)", text: $notionKey)
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        Button("Save integrations") { saveIntegrations() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    .padding(6)
+                }
+
+                // MARK: Son
+                GroupBox("Sound") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("Enable sounds", isOn: $state.soundEnabled)
+                        HStack(spacing: 8) {
+                            Text("Volume")
+                                .frame(width: 56, alignment: .leading)
+                            Slider(value: $state.soundVolume, in: 0...0.2)
+                                .disabled(!state.soundEnabled)
+                            Text("\(Int(state.soundVolume / 0.2 * 100)) %")
+                                .frame(width: 36, alignment: .trailing)
+                                .monospacedDigit()
+                        }
+                    }
+                    .padding(6)
+                }
+
+                // MARK: Timings
+                GroupBox("Behavior") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            Text("Close after")
+                            TextField("60", value: $state.autoCloseInterval, format: .number)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 64)
+                            Text("s inactive")
+                        }
+                        HStack(spacing: 8) {
+                            Text("Hide after")
+                            TextField("3", value: absenceMinutes, format: .number)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 48)
+                            Text("min without movement")
+                        }
+                    }
+                    .padding(6)
+                }
+
+                // MARK: Active pills
+                GroupBox("Active pills") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("VS Code")
+                                .font(.system(size: 12, weight: .semibold))
+                            Circle().fill(Color(hex: "#F5F6F8")).frame(width: 8, height: 8)
+                            Spacer()
+                            Text("Always active")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+
+                        Divider()
+
+                        Text("\(state.activeIntegrations.count)/4 slots used")
+                            .font(.system(size: 11))
+                            .foregroundColor(state.activeIntegrations.count >= 4 ? .orange : .secondary)
+
+                        ForEach(AgentTask.toggleableIntegrationIds, id: \.self) { id in
+                            let task = AgentTask.integrationAgents.first { $0.id == id }!
+                            let isOn = state.activeIntegrations.contains(id)
+                            let atMax = state.activeIntegrations.count >= 4 && !isOn
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(Color(hex: task.color))
+                                    .frame(width: 10, height: 10)
+                                Text(task.name)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(atMax ? .secondary : .primary)
+                                Spacer()
+                                Toggle("", isOn: Binding(
+                                    get: { isOn },
+                                    set: { _ in state.toggleIntegration(id) }
+                                ))
+                                .labelsHidden()
+                                .disabled(atMax)
+                            }
+                        }
+                    }
+                    .padding(6)
+                }
+
+                // MARK: Hotkey
+                GroupBox("Hotkey") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("Show island with shortcut", isOn: $state.hotkeyEnabled)
+                        if state.hotkeyEnabled {
+                            HStack(spacing: 8) {
+                                Text("Shortcut")
+                                    .frame(width: 70, alignment: .leading)
+                                ShortcutRecorderButton(flags: $hotkeyFlags, code: $hotkeyCode)
+                                    .onChange(of: hotkeyFlags) { v in state.hotkeyFlags = v }
+                                    .onChange(of: hotkeyCode)  { v in state.hotkeyCode  = v }
+                                Text("presses this → island opens")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .padding(6)
+                }
+
+                // MARK: Skills
+                GroupBox("Skills") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Skill packs are injected into the assistant prompt. Install from a git URL or a local folder containing SKILL.md.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+
+                        if skills.skills.isEmpty {
+                            Text("No skills installed.")
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                        } else {
+                            ForEach(skills.skills) { skill in
+                                HStack {
+                                    Toggle(skill.name, isOn: Binding(
+                                        get: { skill.enabled },
+                                        set: { _ in skills.toggle(skill) }
+                                    ))
+                                    .toggleStyle(.switch)
+                                    Spacer()
+                                    Button("Remove") {
+                                        do {
+                                            try skills.remove(skill)
+                                        } catch {
+                                            statusMessage = "❌ \(error.localizedDescription)"
+                                        }
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .foregroundColor(.red)
+                                }
+                                if !skill.description.isEmpty {
+                                    Text(skill.description)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+
+                        HStack(spacing: 8) {
+                            TextField("Git URL or local folder", text: $skillURL)
+                                .textFieldStyle(.roundedBorder)
+                            Button(installingSkill ? "Installing..." : "Install") {
+                                installSkill()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(installingSkill || skillURL.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                    }
+                    .padding(6)
+                }
+
+                // MARK: MCP servers
+                GroupBox("MCP Servers") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Model Context Protocol servers give the assistant tools. \(mcp.toolCount) tool(s) connected.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+
+                        if mcp.servers.isEmpty {
+                            Text("No MCP servers configured.")
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                        } else {
+                            ForEach(mcp.servers) { server in
+                                HStack {
+                                    Circle()
+                                        .fill(mcp.connectedIds.contains(server.id) ? Color.green : Color.gray)
+                                        .frame(width: 8, height: 8)
+                                    Toggle(server.name, isOn: Binding(
+                                        get: { server.enabled },
+                                        set: { _ in mcp.toggleServer(id: server.id) }
+                                    ))
+                                    .toggleStyle(.switch)
+                                    Spacer()
+                                    Button("Remove") { mcp.removeServer(id: server.id) }
+                                        .buttonStyle(.borderless)
+                                        .foregroundColor(.red)
+                                }
+                                Text("\(server.command) \(server.args.joined(separator: " "))")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            TextField("Name  (e.g. filesystem)", text: $mcpName)
+                                .textFieldStyle(.roundedBorder)
+                            TextField("Command  (e.g. npx)", text: $mcpCommand)
+                                .textFieldStyle(.roundedBorder)
+                            TextField("Arguments  (space separated, e.g. -y @modelcontextprotocol/server-filesystem /tmp)", text: $mcpArgs)
+                                .textFieldStyle(.roundedBorder)
+                            HStack {
+                                Button("Add server") { addMCPServer() }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(mcpName.trimmingCharacters(in: .whitespaces).isEmpty
+                                              || mcpCommand.trimmingCharacters(in: .whitespaces).isEmpty)
+                                Button("Reconnect all") {
+                                    Task { await mcp.reconnectAll() }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                    .padding(6)
+                }
+
+                // MARK: Startup
+                GroupBox("Startup") {
+                    Toggle("Launch at Mac startup", isOn: $launchAtStartup)
+                        .onChange(of: launchAtStartup) { on in toggleStartup(on) }
+                        .padding(6)
+                }
+
+                if !statusMessage.isEmpty {
+                    Text(statusMessage)
+                        .font(.system(size: 12))
+                        .foregroundColor(statusMessage.hasPrefix("❌") ? .red : .secondary)
+                        .padding(.horizontal, 2)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(20)
+        }
+        .frame(width: 480, height: 720)
+    }
+
+    // MARK: - Actions
+
+    private func toggleStartup(_ on: Bool) {
+        do {
+            if on { try SMAppService.mainApp.register() }
+            else  { try SMAppService.mainApp.unregister() }
+        } catch {
+            statusMessage = "❌ Startup: \(error.localizedDescription)"
+            launchAtStartup = !on
+        }
+    }
+
+    private func installHooks() {
+        do {
+            pendingHookJSON = try HookServer.shared.previewClaudeHooks()
+            showDiff = true
+            statusMessage = "Review the JSON below before confirming."
+        } catch {
+            statusMessage = "❌ \(error.localizedDescription)"
+        }
+    }
+
+    private func confirmInstall() {
+        do {
+            try HookServer.shared.writeClaudeHooks()
+            showDiff = false
+            statusMessage = "✓ Hooks installed in ~/.claude/settings.json"
+            pendingHookJSON = ""
+        } catch {
+            statusMessage = "❌ Write error: \(error.localizedDescription)"
+        }
+    }
+
+    private func uninstallHooks() {
+        do {
+            try HookServer.shared.uninstallClaudeHooks()
+            statusMessage = "✓ Hooks removed."
+        } catch {
+            statusMessage = "❌ \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - AI provider
+
+    /// Persists the key/base-URL fields for the currently selected provider
+    /// without switching the active provider or clearing the conversation.
+    private func persistProviderFields() {
+        let store = AIProviderStore.shared
+        switch providerKind {
+        case .anthropic:
+            saveKey("anthropic-api-key", value: anthropicKey)
+        case .openRouter:
+            saveKey("openrouter-api-key", value: openRouterKey)
+        case .gemini:
+            saveKey("gemini-api-key", value: geminiKey)
+        case .nineRouter:
+            store.setBaseURL(nineURL.trimmingCharacters(in: .whitespacesAndNewlines), for: .nineRouter)
+            saveKey("ninerouter-api-key", value: nineKey)
+        case .openAICompatible:
+            store.setBaseURL(openCompURL.trimmingCharacters(in: .whitespacesAndNewlines), for: .openAICompatible)
+            saveKey("openaicomp-api-key", value: openCompKey)
+        }
+    }
+
+    private func saveProvider() {
+        persistProviderFields()
+        let store = AIProviderStore.shared
+        store.activeKind = providerKind
+        store.setModel(modelName.trimmingCharacters(in: .whitespacesAndNewlines), for: providerKind)
+        // Clear conversation so the next turn uses the new provider/model.
+        ClaudeService.shared.clearConversation()
+        statusMessage = "✓ Provider saved: \(providerKind.displayName)."
+    }
+
+    private func loadModels() {
+        persistProviderFields()
+        loadingModels = true
+        Task {
+            do {
+                let ids = try await AIProviderClient.shared.listModels(kind: providerKind)
+                modelOptions = ids
+                if !ids.contains(modelName), let first = ids.first {
+                    modelName = first
+                }
+                statusMessage = "✓ \(ids.count) model(s) loaded from \(providerKind.displayName)."
+            } catch {
+                statusMessage = "❌ \(error.localizedDescription)"
+            }
+            loadingModels = false
+        }
+    }
+
+    private func testConnection() {
+        persistProviderFields()
+        testingConnection = true
+        Task {
+            do {
+                let ids = try await AIProviderClient.shared.listModels(kind: providerKind)
+                statusMessage = "✓ Connected to \(providerKind.displayName) (\(ids.count) model(s) available)."
+            } catch {
+                statusMessage = "❌ \(error.localizedDescription)"
+            }
+            testingConnection = false
+        }
+    }
+
+    // MARK: - Skills
+
+    private func installSkill() {
+        let input = skillURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !input.isEmpty else { return }
+        installingSkill = true
+        Task {
+            do {
+                try await SkillManager.shared.install(from: input)
+                skillURL = ""
+                statusMessage = "✓ Skill installed."
+            } catch {
+                statusMessage = "❌ \(error.localizedDescription)"
+            }
+            installingSkill = false
+        }
+    }
+
+    // MARK: - MCP
+
+    private func addMCPServer() {
+        let name = mcpName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let command = mcpCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !command.isEmpty else { return }
+        let args = mcpArgs.split(separator: " ").map(String.init)
+        mcp.addServer(MCPManager.ServerConfig(name: name, command: command, args: args))
+        mcpName = ""
+        mcpCommand = ""
+        mcpArgs = ""
+        statusMessage = "✓ MCP server added, connecting..."
+    }
+
+    private func saveIntegrations() {
+        saveKey("resend-api-key",  value: resendKey)
+        saveKey("resend-from",     value: resendFrom)
+        saveKey("n8n-url",         value: n8nUrl)
+        saveKey("n8n-api-key",     value: n8nKey)
+        saveKey("vercel-token",    value: vercelToken)
+        saveKey("github-token",    value: githubToken)
+        saveKey("stripe-api-key",  value: stripeKey)
+        saveKey("calcom-api-key",  value: calcomKey)
+        saveKey("notion-api-key",  value: notionKey)
+        statusMessage = "✓ Integration keys saved."
+    }
+
+    /// Saves non-empty value; removes only if key was previously set (explicit user clear).
+    private func saveKey(_ key: String, value: String) {
+        if value.isEmpty {
+            KeychainStore.shared.remove(key)
+        } else {
+            KeychainStore.shared.set(key, value: value)
+        }
+    }
+
+    // MARK: - Vercel project list
+
+    private func loadVercelProjects() {
+        guard let token = KeychainStore.shared.get("vercel-token") else {
+            statusMessage = "❌ Save Vercel token first."
+            return
+        }
+        loadingVercel = true
+        guard let url = URL(string: "https://api.vercel.com/v9/projects?limit=100") else { return }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        URLSession.shared.dataTask(with: req) { data, response, _ in
+            let names: [String]
+            if let data,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let projects = json["projects"] as? [[String: Any]] {
+                names = projects.compactMap { $0["name"] as? String }.sorted()
+            } else {
+                names = []
+            }
+            DispatchQueue.main.async {
+                self.vercelProjects = names
+                self.loadingVercel = false
+                if names.isEmpty { self.statusMessage = "❌ No Vercel projects found." }
+            }
+        }.resume()
+    }
+
+    // MARK: - n8n workflow list
+
+    private func loadN8nWorkflows() {
+        guard let apiKey  = KeychainStore.shared.get("n8n-api-key"),
+              let rawBase = KeychainStore.shared.get("n8n-url") else {
+            statusMessage = "❌ Save n8n URL and API key first."
+            return
+        }
+        loadingN8n = true
+        let base = rawBase.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let urls = ["\(base)/api/v1/workflows?limit=100", "\(base)/rest/workflows?limit=100"]
+        fetchN8nWorkflows(urls: urls, apiKey: apiKey, idx: 0)
+    }
+
+    private func fetchN8nWorkflows(urls: [String], apiKey: String, idx: Int) {
+        guard idx < urls.count, let url = URL(string: urls[idx]) else {
+            DispatchQueue.main.async { self.loadingN8n = false; self.statusMessage = "❌ No n8n workflows found." }
+            return
+        }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.setValue(apiKey, forHTTPHeaderField: "X-N8N-API-KEY")
+        URLSession.shared.dataTask(with: req) { data, response, _ in
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard let data, code == 200 else {
+                Task { @MainActor in self.fetchN8nWorkflows(urls: urls, apiKey: apiKey, idx: idx + 1) }
+                return
+            }
+            let items: [[String: Any]]
+            if let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               let arr = obj["data"] as? [[String: Any]] { items = arr }
+            else if let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] { items = arr }
+            else { items = [] }
+            let names = items.compactMap { $0["name"] as? String }.sorted()
+            DispatchQueue.main.async {
+                self.n8nWorkflows = names
+                self.loadingN8n = false
+                if names.isEmpty { self.statusMessage = "❌ No n8n workflows found." }
+            }
+        }.resume()
+    }
+}
+
+// MARK: - Integration filter row (reusable for Vercel / n8n)
+
+struct IntegrationFilterRow: View {
+    let label: String
+    let items: [String]
+    @Binding var filter: Set<String>
+    let loading: Bool
+    let onLoad: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(label)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                Spacer()
+                if loading {
+                    ProgressView().scaleEffect(0.6)
+                } else {
+                    Button(items.isEmpty ? "Load list" : "Refresh") { onLoad() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                }
+                if !filter.isEmpty {
+                    Button("Clear") { filter = [] }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                        .foregroundColor(.secondary)
+                }
+            }
+            if !items.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(items, id: \.self) { item in
+                        Toggle(item, isOn: Binding(
+                            get: { filter.isEmpty || filter.contains(item) },
+                            set: { on in
+                                if on { filter.insert(item) }
+                                else  {
+                                    // First click on any item: switch from "all" to explicit set
+                                    if filter.isEmpty { filter = Set(items).subtracting([item]) }
+                                    else { filter.remove(item) }
+                                    if filter.count == items.count { filter = [] } // all = empty
+                                }
+                            }
+                        ))
+                        .font(.system(size: 11))
+                        .toggleStyle(.checkbox)
+                    }
+                }
+                .padding(.leading, 4)
+                if !filter.isEmpty {
+                    Text("Watching \(filter.count) of \(items.count)")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Shortcut recorder button
+
+struct ShortcutRecorderButton: View {
+    @Binding var flags: UInt
+    @Binding var code: UInt16
+    @State private var isRecording = false
+
+    var body: some View {
+        Button {
+            guard !isRecording else { return }
+            isRecording = true
+            var token: Any?
+            token = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                let mods = event.modifierFlags.intersection([.command, .control, .option, .shift])
+                guard !mods.isEmpty else { return event }
+                DispatchQueue.main.async {
+                    self.flags = mods.rawValue
+                    self.code = event.keyCode
+                    self.isRecording = false
+                    if let t = token { NSEvent.removeMonitor(t) }
+                }
+                return nil
+            }
+        } label: {
+            Text(isRecording ? "Press keys…" : shortcutLabel)
+                .font(.system(size: 11, design: .monospaced))
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(isRecording ? Color.accentColor.opacity(0.12) : Color(NSColor.controlBackgroundColor))
+                .cornerRadius(5)
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.gray.opacity(0.3), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var shortcutLabel: String {
+        let f = NSEvent.ModifierFlags(rawValue: flags)
+        var s = ""
+        if f.contains(.control) { s += "⌃" }
+        if f.contains(.option)  { s += "⌥" }
+        if f.contains(.shift)   { s += "⇧" }
+        if f.contains(.command) { s += "⌘" }
+        s += keyChar(code)
+        return s.isEmpty ? "None" : s
+    }
+
+    private func keyChar(_ c: UInt16) -> String {
+        let map: [UInt16: String] = [
+            0:"A", 1:"S", 2:"D", 3:"F", 4:"H", 5:"G", 6:"Z", 7:"X", 8:"C", 9:"V",
+            11:"B", 12:"Q", 13:"W", 14:"E", 15:"R", 16:"Y", 17:"T", 31:"O", 32:"U",
+            34:"I", 37:"L", 38:"J", 40:"K", 45:"N", 46:"M", 49:"Space", 50:"`", 27:"-"
+        ]
+        return map[c] ?? "·"
+    }
+}
