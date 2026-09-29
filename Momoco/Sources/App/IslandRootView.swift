@@ -190,7 +190,11 @@ struct IslandShape: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
-        let cr = max(0, cornerRadius)
+        // Clamp the bottom radius to the shape bounds. Without this, a radius
+        // taller than half the height inverts the side edges and the outline
+        // folds back on itself, which renders as sharp kinks (visible in the
+        // short hidden pill). Same clamp style as topRadius below.
+        let cr = min(max(0, cornerRadius), min(width / 2, height / 2))
         var p  = Path()
 
         if topRadius >= 0 {
