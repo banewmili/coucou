@@ -798,7 +798,8 @@ struct PromptWithTerminalView: View {
                 .frame(width: IslandConst.expandedWidth)
             if state.showTerminal {
                 TerminalIslandPanel(state: state)
-                    .frame(width: IslandConst.terminalPanelWidth, maxHeight: .infinity)
+                    .frame(width: IslandConst.terminalPanelWidth)
+                    .frame(maxHeight: .infinity)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
