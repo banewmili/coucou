@@ -28,6 +28,13 @@ struct MCPToolDefinition {
     let inputSchema: [String: Any]
 }
 
+/// Type-erased JSON value that can cross actor boundaries (Swift 6).
+/// The payload always comes from JSONSerialization, i.e. value types only
+/// (String/Int/Double/Bool/Array/Dictionary), so sharing it is safe.
+struct SendableJSON: @unchecked Sendable {
+    let value: Any
+}
+
 // MARK: - JSON-RPC 2.0 connection over stdio
 
 /// Speaks newline-delimited JSON-RPC 2.0 with an MCP server process.
@@ -42,7 +49,7 @@ final class MCPConnection: @unchecked Sendable {
 
     private let lock = NSLock()
     private var nextId: Int = 1
-    private var pending: [Int: CheckedContinuation<Any, Error>] = [:]
+    private var pending: [Int: CheckedContinuation<SendableJSON, Error>] = [:]
     private var readBuffer = Data()
     private var started = false
 
@@ -92,12 +99,12 @@ final class MCPConnection: @unchecked Sendable {
     }
 
     func stop() {
-        let stale: [CheckedContinuation<Any, Error>]
-        lock.lock()
-        started = false
-        stale = Array(pending.values)
-        pending.removeAll()
-        lock.unlock()
+        let stale: [CheckedContinuation<SendableJSON, Error>] = lock.withLock {
+            started = false
+            let values = Array(pending.values)
+            pending.removeAll()
+            return values
+        }
         for cont in stale {
             cont.resume(throwing: MCPError.notRunning(name))
         }
@@ -117,20 +124,20 @@ final class MCPConnection: @unchecked Sendable {
         try sendNotification(method: "notifications/initialized", params: [:])
     }
 
-    func listTools() async throws -> [[String: Any]] {
+    func listTools() async throws -> [SendableJSON] {
         let result = try await sendRequest(method: "tools/list", params: [:])
-        guard let dict = result as? [String: Any],
+        guard let dict = result.value as? [String: Any],
               let tools = dict["tools"] as? [[String: Any]] else {
             return []
         }
-        return tools
+        return tools.map { SendableJSON(value: $0) }
     }
 
     /// Calls a tool; returns the concatenated text content of the result.
     func callTool(name: String, arguments: [String: Any]) async throws -> String {
         let result = try await sendRequest(method: "tools/call",
                                            params: ["name": name, "arguments": arguments])
-        guard let dict = result as? [String: Any] else { return "" }
+        guard let dict = result.value as? [String: Any] else { return "" }
         var parts: [String] = []
         if let content = dict["content"] as? [[String: Any]] {
             for block in content {
@@ -150,29 +157,28 @@ final class MCPConnection: @unchecked Sendable {
     // MARK: JSON-RPC plumbing
 
     private func sendRequest(method: String, params: [String: Any],
-                             timeout: TimeInterval = 120) async throws -> Any {
-        lock.lock()
-        let id: Int = nextId
-        nextId += 1
-        lock.unlock()
+                             timeout: TimeInterval = 120) async throws -> SendableJSON {
+        // NSLock.lock()/unlock() are unavailable in async contexts (Swift 6);
+        // withLock is the sanctioned scoped alternative.
+        let id: Int = lock.withLock {
+            let id = nextId
+            nextId += 1
+            return id
+        }
         var message: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method]
         if !params.isEmpty { message["params"] = params }
         let line = try JSONSerialization.data(withJSONObject: message)
 
-        return try await withThrowingTaskGroup(of: Any.self) { group in
+        return try await withThrowingTaskGroup(of: SendableJSON.self) { group in
             group.addTask {
-                try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Any, Error>) in
-                    self.lock.lock()
-                    self.pending[id] = cont
-                    self.lock.unlock()
+                try await withCheckedThrowingContinuation { (cont: CheckedContinuation<SendableJSON, Error>) in
+                    lock.withLock { self.pending[id] = cont }
                     do {
                         var framed = line
                         framed.append(0x0A)
                         try self.stdinPipe.fileHandleForWriting.write(contentsOf: framed)
                     } catch {
-                        self.lock.lock()
-                        self.pending.removeValue(forKey: id)
-                        self.lock.unlock()
+                        lock.withLock { self.pending.removeValue(forKey: id) }
                         cont.resume(throwing: error)
                     }
                 }
@@ -220,17 +226,18 @@ final class MCPConnection: @unchecked Sendable {
         else if let idNum = json["id"] as? NSNumber { idValue = idNum.intValue }
         guard let id = idValue else { return }
 
-        lock.lock()
-        let cont: CheckedContinuation<Any, Error>? = pending[id]
-        pending.removeValue(forKey: id)
-        lock.unlock()
+        let cont: CheckedContinuation<SendableJSON, Error>? = lock.withLock {
+            let c = pending[id]
+            pending.removeValue(forKey: id)
+            return c
+        }
         guard let cont else { return }
 
         if let error = json["error"] as? [String: Any] {
             let msg = error["message"] as? String ?? "unknown error"
             cont.resume(throwing: MCPError.protocolError(msg))
         } else {
-            cont.resume(returning: json["result"] ?? [:])
+            cont.resume(returning: SendableJSON(value: json["result"] ?? [:]))
         }
     }
 
@@ -261,10 +268,10 @@ final class MCPManager: ObservableObject {
     @Published private(set) var connectedIds: Set<String> = []
 
     private var connections: [String: MCPConnection] = [:]
-    /// Raw tool dicts per server id (populated on successful connect).
-    private var toolsByServer: [String: [[String: Any]]] = [:]
-    /// tool name -> (server id, raw tool dict). First server wins on collision.
-    private var toolIndex: [String: (serverId: String, raw: [String: Any])] = [:]
+    /// Raw tool payloads per server id (populated on successful connect).
+    private var toolsByServer: [String: [SendableJSON]] = [:]
+    /// tool name -> (server id, raw tool payload). First server wins on collision.
+    private var toolIndex: [String: (serverId: String, raw: SendableJSON)] = [:]
 
     private var configURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -358,9 +365,9 @@ final class MCPManager: ObservableObject {
             guard connections[server.id] != nil,
                   let tools = toolsByServer[server.id] else { continue }
             for tool in tools {
-                if let name = tool["name"] as? String, toolIndex[name] == nil {
-                    toolIndex[name] = (server.id, tool)
-                }
+                guard let dict = tool.value as? [String: Any],
+                      let name = dict["name"] as? String, toolIndex[name] == nil else { continue }
+                toolIndex[name] = (server.id, tool)
             }
         }
     }
@@ -368,8 +375,8 @@ final class MCPManager: ObservableObject {
     /// Definitions for the active AI provider, in provider-agnostic form.
     func toolDefinitions() -> [MCPToolDefinition] {
         toolIndex.values.compactMap { entry -> MCPToolDefinition? in
-            let raw = entry.raw
-            guard let name = raw["name"] as? String else { return nil }
+            guard let raw = entry.raw.value as? [String: Any],
+                  let name = raw["name"] as? String else { return nil }
             let serverName = servers.first(where: { $0.id == entry.serverId })?.name ?? "mcp"
             return MCPToolDefinition(
                 serverName: serverName,

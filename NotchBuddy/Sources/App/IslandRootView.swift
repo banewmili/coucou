@@ -391,7 +391,8 @@ struct CountdownBar: View {
 
     private func startTimer() {
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-            updateBar()
+            // Timer block is @Sendable (Xcode 16); hop to MainActor for @State mutation.
+            Task { @MainActor in self.updateBar() }
         }
     }
 

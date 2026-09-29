@@ -110,7 +110,7 @@ private func greetPose(_ t: Double) -> GreetPose {
 
     // body grows with back-ease (tiny → full size)
     let gg = GE.back(gSeg(t, 0.02, GT.grow))
-    var hb = gLerp(3, Double(GHB), gg)
+    let hb = gLerp(3, Double(GHB), gg)
     var x  = Double(GC0.x)
     var y  = gLerp(16, Double(GC0.y), GE.out(gSeg(t, 0.02, GT.grow)))
     var sx = 1.0, sy = 1.0, tilt = 0.0

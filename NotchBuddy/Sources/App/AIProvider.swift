@@ -52,6 +52,7 @@ struct AIProviderSettings: Codable {
     var customBaseURL: String = ""        // openAICompatible only
 }
 
+@MainActor
 final class AIProviderStore {
     static let shared = AIProviderStore()
 

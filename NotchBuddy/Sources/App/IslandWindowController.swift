@@ -185,7 +185,9 @@ final class IslandWindowController: NSWindowController {
         NotificationCenter.default.addObserver(
             forName: .greetComplete, object: nil, queue: .main
         ) { [weak self] _ in
-            self?.fsm.greetComplete()
+            Task { @MainActor in
+                self?.fsm.greetComplete()
+            }
         }
     }
 
@@ -357,24 +359,31 @@ final class IslandWindowController: NSWindowController {
 
         // Hook server expand requests (alerts only)
         NotificationCenter.default.addObserver(forName: .hookExpand, object: nil, queue: .main) { [weak self] note in
-            guard let self, let view = note.object as? IslandView else { return }
-            self.expand(to: view)
+            guard let view = note.object as? IslandView else { return }
+            Task { @MainActor in
+                self?.expand(to: view)
+            }
         }
 
         // Hook server compact reveal (non-alert work events: session start, tool use, etc.)
         NotificationCenter.default.addObserver(forName: .hookReveal, object: nil, queue: .main) { [weak self] _ in
-            guard let self else { return }
-            self.fsm.reveal()
+            Task { @MainActor in
+                self?.fsm.reveal()
+            }
         }
 
         // Collapse requests from views (OK button, etc.)
         NotificationCenter.default.addObserver(forName: .islandCollapse, object: nil, queue: .main) { [weak self] _ in
-            self?.collapse()
+            Task { @MainActor in
+                self?.collapse()
+            }
         }
 
         // .botDizzy — posted by BotEngine.slap() on 3rd hit; show confused view + recover after 3.3s
         NotificationCenter.default.addObserver(forName: .botDizzy, object: nil, queue: .main) { [weak self] _ in
-            self?.handleDizzy()
+            Task { @MainActor in
+                self?.handleDizzy()
+            }
         }
 
         // Window attach drag.
@@ -466,10 +475,10 @@ final class IslandWindowController: NSWindowController {
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil, queue: .main
         ) { [weak self] note in
-            guard let self else { return }
-            if let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-               app.bundleIdentifier != ourBundle {
-                self.state.lastExternalApp = app
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+               app.bundleIdentifier != ourBundle else { return }
+            Task { @MainActor in
+                self?.state.lastExternalApp = app
             }
         }
     }
