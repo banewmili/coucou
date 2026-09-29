@@ -765,6 +765,10 @@ final class IslandWindowController: NSWindowController {
     }
 
     static func notchWidth(for screen: NSScreen) -> CGFloat {
+        // No notch on this screen (e.g. Intel Macs): fall back to the compact
+        // default pill width. Without this the hidden island stretches across
+        // the full screen width and reads as a plain bar.
+        guard screen.safeAreaInsets.top > 0 else { return IslandConst.notchWidth }
         let aux = (screen.auxiliaryTopLeftArea?.width ?? 0) +
                   (screen.auxiliaryTopRightArea?.width ?? 0)
         let w = screen.frame.width - aux
