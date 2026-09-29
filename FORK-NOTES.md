@@ -61,6 +61,21 @@ Not build-verified: this was written on a Linux VM without Xcode. Review the
 three new files once before shipping; the riskiest area is `MCPConnection`
 (stdio framing, continuation bookkeeping).
 
+## Ventura (macOS 13) port
+Deployment target lowered 15.0 → 13.0 in `NotchBuddy/project.yml`
+(`deploymentTarget` + `MACOSX_DEPLOYMENT_TARGET`). Supporting changes:
+- All two-parameter `onChange(of:)` (macOS 14+) converted to one-parameter
+  form; the one site that used `oldMode` (`IslandRootView`) now tracks the
+  previous mode in `@State previousMode`.
+- `NSLock.withLock` replaced with manual `lock()`/`defer { unlock() }` in
+  `ClaudeService.swift` (KeychainStore) and `MCPClient.swift`; `stop()` also
+  resumes stale continuations after unlocking (avoids resume-under-lock).
+- No other 14+ APIs found (no sensoryFeedback/symbolEffect/PhaseAnimator/
+  scrollTarget/etc.).
+Not compile-verified: push to GitHub and let the CI build (Xcode 16 checks
+API availability against the 13.0 deployment target) — paste any errors
+back here for fixing.
+
 ## CI (GitHub Actions)
 `.github/workflows/build.yml` (extended from upstream): pinned to `macos-15`
 with explicit Xcode 16 selection. Every push/PR builds Release, ad-hoc signs,
