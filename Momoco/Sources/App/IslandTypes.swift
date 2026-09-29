@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 // MARK: - Island Mode
 
@@ -85,6 +86,12 @@ enum IslandConst {
     static let earRadius: CGFloat   = 14
     static let roundedCorner: CGFloat = 14    // hidden/peek/compact
     static let expandedCorner: CGFloat = 22
+    /// Compact/hidden pill: height matches the Mac menu bar, width kept short.
+    static let compactWidth: CGFloat = 148
+    static var compactHeight: CGFloat { NSStatusBar.system.thickness }
+    static var compactRadius: CGFloat { compactHeight / 2 }
+    /// Terminal side panel width (expanded prompt view).
+    static let terminalPanelWidth: CGFloat = 340
 
     static let viewLayouts: [IslandView: ViewLayout] = [
         // Home is the reference: height 150

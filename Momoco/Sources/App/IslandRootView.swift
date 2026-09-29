@@ -108,10 +108,12 @@ struct IslandContainer: View {
             let anim = shrinking ? closeEase : openSpring
             let (w, h) = islandSize(mode: newMode, view: state.view,
                                     progress: state.uploadProgress,
-                                    nw: state.notchWidth, nh: state.notchHeight)
-            let cr  = newMode == .expanded ? IslandConst.expandedCorner : IslandConst.roundedCorner
-            // Hidden: round all four corners (pill over the notch) instead of a sharp-top box.
-            let tr: CGFloat = newMode == .hidden ? IslandConst.roundedCorner : 0
+                                    nw: state.notchWidth, nh: state.notchHeight,
+                                    showTerminal: state.showTerminal)
+            // Expanded keeps its large rounded rect; hidden/compact are a fully
+            // rounded pill sized to the Mac menu bar.
+            let cr: CGFloat = newMode == .expanded ? IslandConst.expandedCorner : IslandConst.compactRadius
+            let tr: CGFloat = newMode == .expanded ? 0 : IslandConst.compactRadius
             withAnimation(anim) {
                 islandWidth      = w
                 islandHeight     = (newMode == .expanded && state.view == .prompt) ? chatPromptHeight : h
@@ -129,11 +131,20 @@ struct IslandContainer: View {
             }
             let (w, h) = islandSize(mode: .expanded, view: newView,
                                     progress: state.uploadProgress,
-                                    nw: state.notchWidth, nh: state.notchHeight)
+                                    nw: state.notchWidth, nh: state.notchHeight,
+                                    showTerminal: state.showTerminal)
             withAnimation(openSpring) {
                 islandWidth  = w
                 islandHeight = newView == .prompt ? chatPromptHeight : h
             }
+        }
+        .onChange(of: state.showTerminal) { _ in
+            guard state.mode == .expanded else { return }
+            let (w, _) = islandSize(mode: .expanded, view: state.view,
+                                    progress: state.uploadProgress,
+                                    nw: state.notchWidth, nh: state.notchHeight,
+                                    showTerminal: state.showTerminal)
+            withAnimation(openSpring) { islandWidth = w }
         }
         .onChange(of: state.chatHistory.count) { _ in
             guard state.mode == .expanded, state.view == .prompt else { return }
@@ -142,11 +153,12 @@ struct IslandContainer: View {
         .onAppear {
             let (w, h) = islandSize(mode: state.mode, view: state.view,
                                     progress: state.uploadProgress,
-                                    nw: state.notchWidth, nh: state.notchHeight)
+                                    nw: state.notchWidth, nh: state.notchHeight,
+                                    showTerminal: state.showTerminal)
             islandWidth      = w
             islandHeight     = state.view == .prompt ? chatPromptHeight : h
-            cornerRadius     = state.mode == .expanded ? IslandConst.expandedCorner : IslandConst.roundedCorner
-            islandTopRadius  = state.mode == .hidden ? IslandConst.roundedCorner : 0
+            cornerRadius     = state.mode == .expanded ? IslandConst.expandedCorner : IslandConst.compactRadius
+            islandTopRadius  = state.mode == .expanded ? 0 : IslandConst.compactRadius
         }
         .onReceive(NotificationCenter.default.publisher(for: .botGreet)) { _ in
             greetNotif.toggle()
@@ -340,7 +352,7 @@ struct BotPlacement: View {
 func botPosition(mode: IslandMode, view: IslandView, islandW: CGFloat, islandH: CGFloat, uploadProgress: Double) -> (CGFloat, CGFloat, CGFloat, Double) {
     switch mode {
     case .hidden:   return (46, 16, 6, 0)
-    case .compact:  return (islandW / 2, 16, 20, 1)
+    case .compact:  return (islandW / 2, islandH / 2, 20, 1)
     case .expanded:
         let layout = IslandConst.viewLayouts[view]!
         let diameter = layout.botDiameter
@@ -465,6 +477,23 @@ struct IslandHeader: View {
                         state.promptContext = WindowContextCapture.captureActive(from: state.lastExternalApp)
                     }
                 })
+                // Terminal side panel (beside the chat)
+                Button(action: {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        if !state.showTerminal && state.view != .prompt {
+                            state.view = .prompt
+                        }
+                        state.showTerminal.toggle()
+                    }
+                }) {
+                    Image(systemName: state.showTerminal ? "terminal.fill" : "terminal")
+                        .font(.system(size: 13))
+                        .foregroundColor(state.showTerminal ? Color(hex: "#F5F6F8") : Color(hex: "#8E939C"))
+                        .frame(width: 30, height: 22)
+                        .background(state.showTerminal ? Color(hex: "#1D1F23") : Color.clear)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
                 TabButton(icon: "plus", view: .upload, state: state)
             }
             .padding(.leading, 14)
