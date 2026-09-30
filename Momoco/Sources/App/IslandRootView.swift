@@ -109,11 +109,12 @@ struct IslandContainer: View {
             let (w, h) = islandSize(mode: newMode, view: state.view,
                                     progress: state.uploadProgress,
                                     nw: state.notchWidth, nh: state.notchHeight)
-            // Expanded keeps its large rounded rect; hidden/compact are a fully
-            // rounded pill (344x32 on notch-less Macs, like the reference shot).
+            // Expanded keeps its large rounded rect; hidden stays a fully
+            // rounded pill; compact is a top-edge tab with sharp top corners
+            // and rounded bottom only (like the reference shot).
             let pillR: CGFloat = state.notchHeight / 2
             let cr: CGFloat = newMode == .expanded ? IslandConst.expandedCorner : pillR
-            let tr: CGFloat = newMode == .expanded ? 0 : pillR
+            let tr: CGFloat = newMode == .hidden ? pillR : 0
             withAnimation(anim) {
                 islandWidth      = w
                 islandHeight     = (newMode == .expanded && state.view == .prompt) ? chatPromptHeight : h
@@ -149,7 +150,7 @@ struct IslandContainer: View {
             islandHeight     = state.view == .prompt ? chatPromptHeight : h
             let pillR: CGFloat = state.notchHeight / 2
             cornerRadius     = state.mode == .expanded ? IslandConst.expandedCorner : pillR
-            islandTopRadius  = state.mode == .expanded ? 0 : pillR
+            islandTopRadius  = state.mode == .hidden ? pillR : 0
         }
         .onReceive(NotificationCenter.default.publisher(for: .botGreet)) { _ in
             greetNotif.toggle()
@@ -163,9 +164,9 @@ struct IslandContainer: View {
 
 // MARK: - Island shape
 //
-// topRadius > 0  → convex rounded top corners (expanded mode)
-// topRadius < 0  → concave ear cutouts, |topRadius| = ear radius (compact/notch mode)
-// topRadius = 0  → sharp top corners (transient during animation)
+// topRadius > 0  → convex rounded top corners (hidden mode)
+// topRadius < 0  → concave ear cutouts, |topRadius| = ear radius (notch hardware)
+// topRadius = 0  → sharp top corners (compact tab, expanded)
 
 struct IslandShape: Shape {
     var width: CGFloat
